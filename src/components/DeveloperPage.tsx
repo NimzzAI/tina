@@ -143,14 +143,19 @@ const SHOWCASE_HIGHLIGHTS = [
     testUrl: 'https://vm.tiktok.com/ZSgCBT3wv/',
   },
   {
+    title: 'Video Multi-Resolusi & YouTube Direct Stream',
+    subtitle: 'YouTube HD · V10 Video Player · Audio MP3',
+    testUrl: 'https://youtu.be/Sgt6yH9UM-c?si=dUP74ef5pdgEShXX',
+  },
+  {
+    title: 'Streaming & Unduhan Lagu Spotify 320kbps',
+    subtitle: 'Spotify Track · V10 Audio Deck · Cover Artwork HD',
+    testUrl: 'https://open.spotify.com/track/0wULafSHeHYZFu54R9ZFRJ',
+  },
+  {
     title: 'Galeri Ilustrasi Multi-Slide & Kompilasi PDF',
     subtitle: 'Pixiv Artwork · Pratinjau Lightbox · Ekspor PDF',
     testUrl: 'https://www.pixiv.net/en/artworks/90000005',
-  },
-  {
-    title: 'Streaming & Unduhan Audio Musik Original',
-    subtitle: 'SoundCloud Track · V10 Audio Deck · MP3 HQ',
-    testUrl: 'https://soundcloud.com/forss/flickermood',
   },
 ];
 

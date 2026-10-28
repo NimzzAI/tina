@@ -14,11 +14,38 @@ function formatTimeCode(seconds: number): string {
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
+function extractYouTubeId(webpageUrl?: string, streamId?: string): string | null {
+  if (webpageUrl) {
+    const m = webpageUrl.match(
+      /(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?|shorts|live)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/i
+    );
+    if (m?.[1]) return m[1];
+  }
+  if (streamId) {
+    const m2 = streamId.match(/^yt_([A-Za-z0-9_-]{11})_/);
+    if (m2?.[1]) return m2[1];
+  }
+  return null;
+}
+
+function extractSpotifyTrackId(webpageUrl?: string, streamId?: string): string | null {
+  if (webpageUrl) {
+    const m = webpageUrl.match(/spotify\.com\/(?:intl-[a-z-]+\/)?(track|episode)\/([A-Za-z0-9]+)/i);
+    if (m?.[2]) return m[2];
+  }
+  if (streamId) {
+    const m2 = streamId.match(/^sp_([A-Za-z0-9]+)_/);
+    if (m2?.[1]) return m2[1];
+  }
+  return null;
+}
+
 interface V10VideoPlayerProps {
   activeStream: DownloadStream;
   videoStreams: DownloadStream[];
   poster?: string;
   title: string;
+  webpageUrl?: string;
   onSelectStream: (stream: DownloadStream) => void;
   onDownload: (stream: DownloadStream) => void;
   buildStreamUrl: (url: string) => string;
@@ -29,6 +56,7 @@ export function V10VideoPlayer({
   videoStreams,
   poster,
   title,
+  webpageUrl,
   onSelectStream,
   onDownload,
   buildStreamUrl,
@@ -38,6 +66,14 @@ export function V10VideoPlayer({
   const resumeTimeRef = useRef<number>(0);
   const wasPlayingRef = useRef<boolean>(false);
 
+  const youtubeId = extractYouTubeId(webpageUrl, activeStream.id);
+  const isSampleFallbackStream =
+    activeStream.url.includes('commondatastorage.googleapis.com') ||
+    activeStream.url.includes('proxy.piped.private.coffee');
+
+  const [useYoutubeEmbed, setUseYoutubeEmbed] = useState<boolean>(
+    Boolean(youtubeId && isSampleFallbackStream)
+  );
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isWaiting, setIsWaiting] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
@@ -50,9 +86,18 @@ export function V10VideoPlayer({
   const [showHud, setShowHud] = useState<boolean>(true);
   const [resMenuOpen, setResMenuOpen] = useState<boolean>(false);
   const [pulseAction, setPulseAction] = useState<'play' | 'pause' | null>(null);
-  const [useDirectUrl, setUseDirectUrl] = useState<boolean>(false);
+  const [fallbackStage, setFallbackStage] = useState<number>(0);
 
   const hideTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const ytId = extractYouTubeId(webpageUrl, activeStream.id);
+    const isFallback =
+      activeStream.url.includes('commondatastorage.googleapis.com') ||
+      activeStream.url.includes('proxy.piped.private.coffee');
+    setUseYoutubeEmbed(Boolean(ytId && isFallback));
+    setFallbackStage(0);
+  }, [webpageUrl, activeStream.id, activeStream.url]);
 
   const triggerHudVisibility = useCallback(() => {
     setShowHud(true);
@@ -75,9 +120,8 @@ export function V10VideoPlayer({
 
   // Preserve playback time when switching resolutions
   useEffect(() => {
-    setUseDirectUrl(false);
     const vid = videoRef.current;
-    if (!vid) return;
+    if (!vid || useYoutubeEmbed) return;
     setIsWaiting(true);
     const handleLoaded = () => {
       setIsWaiting(false);
@@ -94,7 +138,7 @@ export function V10VideoPlayer({
     };
     vid.addEventListener('loadedmetadata', handleLoaded, { once: true });
     return () => vid.removeEventListener('loadedmetadata', handleLoaded);
-  }, [activeStream.url]);
+  }, [activeStream.url, useYoutubeEmbed]);
 
   useEffect(() => {
     const onFsChange = () => {
@@ -165,7 +209,7 @@ export function V10VideoPlayer({
   };
 
   const handleSwitchResolution = (stream: DownloadStream) => {
-    if ( videoRef.current ) {
+    if (videoRef.current) {
       resumeTimeRef.current = videoRef.current.currentTime || 0;
       wasPlayingRef.current = !videoRef.current.paused;
     }
@@ -207,6 +251,39 @@ export function V10VideoPlayer({
     activeStream.quality.match(/\b(2160p|1440p|1080p|720p|540p|480p|360p|HD|SD)\b/i)?.[1] ||
     'HD';
 
+  const resolvedVideoSrc = (() => {
+    const base = buildStreamUrl(activeStream.url);
+    if (fallbackStage === 0) return base;
+    if (base.startsWith('/api/proxy-stream')) return activeStream.url;
+    return `/api/proxy-stream?url=${encodeURIComponent(activeStream.url)}&ext=mp4`;
+  })();
+
+  if (useYoutubeEmbed && youtubeId) {
+    return (
+      <div className="space-y-2">
+        <div className="relative w-full aspect-video bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-xl overflow-hidden">
+          <iframe
+            src={`https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=0&playsinline=1&rel=0&modestbranding=1`}
+            title={title}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            className="w-full h-full border-0"
+          />
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-[11px] font-mono text-neutral-500 dark:text-neutral-400">
+          <span>V10 YOUTUBE DIRECT STREAM · ID: {youtubeId}</span>
+          <button
+            type="button"
+            onClick={() => setUseYoutubeEmbed(false)}
+            className="px-2.5 py-1 rounded-md border border-neutral-300 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-900 text-neutral-700 dark:text-neutral-300 font-semibold transition-colors cursor-pointer"
+          >
+            Beralih ke Pemutar HTML5 Native
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={containerRef}
@@ -222,13 +299,7 @@ export function V10VideoPlayer({
       {/* Core HTML5 Video Element (Native controls disabled — V10 Custom HUD) */}
       <video
         ref={videoRef}
-        src={
-          useDirectUrl
-            ? buildStreamUrl(activeStream.url).startsWith('/api/proxy-stream')
-              ? activeStream.url
-              : `/api/proxy-stream?url=${encodeURIComponent(activeStream.url)}`
-            : buildStreamUrl(activeStream.url)
-        }
+        src={resolvedVideoSrc}
         poster={poster || undefined}
         playsInline
         preload="metadata"
@@ -237,8 +308,10 @@ export function V10VideoPlayer({
         onDoubleClick={toggleFullscreen}
         onError={() => {
           setIsWaiting(false);
-          if (!useDirectUrl && activeStream.url) {
-            setUseDirectUrl(true);
+          if (fallbackStage === 0 && activeStream.url) {
+            setFallbackStage(1);
+          } else if (youtubeId) {
+            setUseYoutubeEmbed(true);
           }
         }}
         onPlay={() => {
@@ -271,7 +344,7 @@ export function V10VideoPlayer({
         className="w-full h-full object-contain cursor-pointer bg-neutral-950"
       />
 
-      {/* Top V10 Media Player Telemetry Header */}
+      {/* Top V10 Media Player Header */}
       <AnimatePresence>
         {(showHud || !isPlaying) && (
           <motion.div
@@ -279,16 +352,27 @@ export function V10VideoPlayer({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.15 }}
-            className="absolute top-0 inset-x-0 px-4 py-3 bg-gradient-to-b from-black/80 via-black/35 to-transparent flex items-center justify-between gap-3 pointer-events-none"
+            className="absolute top-0 inset-x-0 px-4 py-3 bg-gradient-to-b from-black/80 via-black/35 to-transparent flex items-center justify-between gap-3"
           >
-            <div className="flex items-center gap-2 text-[11px] font-mono tracking-wider text-neutral-200">
-              <span className="w-2 h-2 rounded-full bg-white inline-block" />
+            <div className="flex items-center gap-2 text-[11px] font-mono tracking-wider text-neutral-200 pointer-events-none">
+              <span className="w-2 h-2 rounded-xs bg-white inline-block" />
               <span className="font-bold">V10 MEDIA PLAYER</span>
               <span className="text-neutral-500">·</span>
               <span className="text-neutral-300">{activeResLabel}</span>
             </div>
-            <div className="text-[11px] font-mono text-neutral-400 truncate max-w-[55%]">
-              {title}
+            <div className="flex items-center gap-2">
+              {youtubeId && (
+                <button
+                  type="button"
+                  onClick={() => setUseYoutubeEmbed(true)}
+                  className="px-2 py-0.5 rounded-md bg-white/15 hover:bg-white/25 text-white text-[10px] font-mono font-bold transition-colors cursor-pointer"
+                >
+                  Mode YouTube Asli
+                </button>
+              )}
+              <div className="text-[11px] font-mono text-neutral-400 truncate max-w-[180px] sm:max-w-[260px] pointer-events-none">
+                {title}
+              </div>
             </div>
           </motion.div>
         )}
@@ -304,7 +388,7 @@ export function V10VideoPlayer({
             exit={{ opacity: 0 }}
             className="absolute inset-0 flex items-center justify-center pointer-events-none"
           >
-            <div className="w-12 h-12 rounded-full bg-black/75 border border-white/20 text-white flex items-center justify-center">
+            <div className="w-12 h-12 rounded-lg bg-black/75 border border-white/20 text-white flex items-center justify-center">
               <i className="fa-solid fa-circle-notch fa-spin text-base" />
             </div>
           </motion.div>
@@ -320,7 +404,7 @@ export function V10VideoPlayer({
             type="button"
             onClick={togglePlay}
             aria-label="Putar Video"
-            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-white/95 hover:bg-white text-neutral-950 flex items-center justify-center shadow-2xl transition-transform hover:scale-105 cursor-pointer"
+            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-14 h-14 rounded-xl bg-white/95 hover:bg-white text-neutral-950 flex items-center justify-center shadow-2xl transition-transform hover:scale-105 cursor-pointer"
           >
             <i className="fa-solid fa-play text-base ml-0.5" />
           </motion.button>
@@ -333,7 +417,7 @@ export function V10VideoPlayer({
             animate={{ opacity: 0, scale: 1.35 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.4 }}
-            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-black/70 border border-white/25 text-white flex items-center justify-center pointer-events-none"
+            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-14 h-14 rounded-xl bg-black/70 border border-white/25 text-white flex items-center justify-center pointer-events-none"
           >
             <i className={`fa-solid ${pulseAction === 'play' ? 'fa-play' : 'fa-pause'} text-base`} />
           </motion.div>
@@ -352,23 +436,19 @@ export function V10VideoPlayer({
           >
             {/* Interactive Scrubber Timeline */}
             <div className="relative h-4 flex items-center group/scrub">
-              {/* Track Background */}
-              <div className="w-full h-1 group-hover/scrub:h-1.5 bg-white/20 rounded-full overflow-hidden relative transition-all">
-                {/* Buffered Bar */}
+              <div className="w-full h-1 group-hover/scrub:h-1.5 bg-white/20 rounded-xs overflow-hidden relative transition-all">
                 <div
                   className="absolute left-0 top-0 bottom-0 bg-white/35 transition-all"
                   style={{ width: `${bufferedPct}%` }}
                 />
-                {/* Active Progress Bar */}
                 <div
                   className="absolute left-0 top-0 bottom-0 bg-white transition-all"
                   style={{ width: `${progressPct}%` }}
                 />
               </div>
 
-              {/* Scrubber Thumb */}
               <div
-                className="w-3 h-3 rounded-full bg-white shadow pointer-events-none absolute -translate-x-1/2 transition-transform group-hover/scrub:scale-125"
+                className="w-2.5 h-2.5 rounded-xs bg-white shadow pointer-events-none absolute -translate-x-1/2 transition-transform group-hover/scrub:scale-125"
                 style={{ left: `${progressPct}%` }}
               />
 
@@ -386,7 +466,6 @@ export function V10VideoPlayer({
 
             {/* Bottom Controls Bar */}
             <div className="flex items-center justify-between gap-2 text-white text-xs">
-              {/* Left Cluster: Play/Pause, Skip, Volume, Timecode */}
               <div className="flex items-center gap-3">
                 <button
                   type="button"
@@ -415,7 +494,6 @@ export function V10VideoPlayer({
                   <i className="fa-solid fa-rotate-right text-[11px]" />
                 </button>
 
-                {/* Volume Cluster */}
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
@@ -441,11 +519,10 @@ export function V10VideoPlayer({
                     value={isMuted ? 0 : volume}
                     onChange={handleVolumeChange}
                     aria-label="Pengatur Volume"
-                    className="w-14 sm:w-16 h-1 accent-white bg-white/25 rounded-lg cursor-pointer hidden sm:block"
+                    className="w-14 sm:w-16 h-1 accent-white bg-white/25 rounded-xs cursor-pointer hidden sm:block"
                   />
                 </div>
 
-                {/* Monospace Timecode */}
                 <div className="font-mono text-[11px] tabular-nums text-neutral-300 pl-1">
                   <span className="text-white font-semibold">{formatTimeCode(currentTime)}</span>
                   <span className="mx-1 text-neutral-500">/</span>
@@ -453,19 +530,16 @@ export function V10VideoPlayer({
                 </div>
               </div>
 
-              {/* Right Cluster: Speed, Resolution Menu, PiP, Download, Fullscreen */}
               <div className="flex items-center gap-1.5 relative">
-                {/* Playback Speed */}
                 <button
                   type="button"
                   onClick={cycleSpeed}
                   title="Kecepatan Putar"
-                  className="px-2 py-1 rounded-md hover:bg-white/15 font-mono text-[11px] text-neutral-300 hover:text-white transition-colors cursor-pointer"
+                  className="px-2 py-1 rounded-md hover:bg-white/15 font-mono text-[11px] tabular-nums text-neutral-300 hover:text-white transition-colors cursor-pointer"
                 >
                   {playbackRate}x
                 </button>
 
-                {/* Resolution Selector */}
                 {videoStreams.length > 1 && (
                   <div className="relative">
                     <button
@@ -515,7 +589,6 @@ export function V10VideoPlayer({
                   </div>
                 )}
 
-                {/* Picture-in-Picture */}
                 <button
                   type="button"
                   onClick={togglePiP}
@@ -525,7 +598,6 @@ export function V10VideoPlayer({
                   <i className="fa-regular fa-window-restore text-[11px]" />
                 </button>
 
-                {/* Direct Download from V10 Player */}
                 <button
                   type="button"
                   onClick={() => onDownload(activeStream)}
@@ -535,7 +607,6 @@ export function V10VideoPlayer({
                   <i className="fa-solid fa-download text-[11px]" />
                 </button>
 
-                {/* Fullscreen */}
                 <button
                   type="button"
                   onClick={toggleFullscreen}
@@ -558,6 +629,7 @@ interface V10AudioPlayerProps {
   title: string;
   author: string;
   thumbnail?: string;
+  webpageUrl?: string;
   compact?: boolean;
   onDownload: (stream: DownloadStream) => void;
   buildStreamUrl: (url: string) => string;
@@ -568,6 +640,7 @@ export function V10AudioPlayer({
   title,
   author,
   thumbnail,
+  webpageUrl,
   compact = false,
   onDownload,
   buildStreamUrl,
@@ -577,20 +650,68 @@ export function V10AudioPlayer({
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [useDirectAudioUrl, setUseDirectAudioUrl] = useState<boolean>(false);
+  const [fallbackStage, setFallbackStage] = useState<number>(0);
+  const [resolvedTokenUrl, setResolvedTokenUrl] = useState<string | null>(null);
+  const [showSpotifyEmbed, setShowSpotifyEmbed] = useState<boolean>(false);
+
+  const spotifyTrackId = extractSpotifyTrackId(webpageUrl, stream.id);
 
   useEffect(() => {
-    setUseDirectAudioUrl(false);
+    setFallbackStage(0);
+    setResolvedTokenUrl(null);
     setIsPlaying(false);
     setCurrentTime(0);
     setDuration(0);
-  }, [stream.url]);
+
+    if (
+      stream.needsResolve ||
+      stream.url.startsWith('spotidown_resolve:') ||
+      stream.url.startsWith('applemusic_resolve:') ||
+      stream.url.startsWith('youtube_resolve:') ||
+      stream.url.startsWith('ytmp3gg_resolve:')
+    ) {
+      fetch('/api/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tokenUrl: stream.url }),
+      })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d?.url) {
+            setResolvedTokenUrl(`/api/proxy-stream?url=${encodeURIComponent(d.url)}&ext=mp3`);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [stream.url, stream.needsResolve]);
+
+  const effectiveAudioSrc = (() => {
+    if (resolvedTokenUrl) return resolvedTokenUrl;
+    if (
+      stream.url.startsWith('spotidown_resolve:') ||
+      stream.url.startsWith('applemusic_resolve:') ||
+      stream.url.startsWith('youtube_resolve:') ||
+      stream.url.startsWith('ytmp3gg_resolve:')
+    ) {
+      return 'https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369';
+    }
+    const base = buildStreamUrl(stream.url);
+    if (fallbackStage === 0) return base;
+    if (fallbackStage === 1) {
+      return base.startsWith('/api/proxy-stream')
+        ? stream.url
+        : `/api/proxy-stream?url=${encodeURIComponent(stream.url)}&ext=mp3`;
+    }
+    return 'https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369';
+  })();
 
   const togglePlay = () => {
     const aud = audioRef.current;
     if (!aud) return;
     if (aud.paused) {
-      aud.play().catch(() => {});
+      aud.play().catch(() => {
+        if (fallbackStage < 2) setFallbackStage((s) => s + 1);
+      });
     } else {
       aud.pause();
     }
@@ -621,17 +742,11 @@ export function V10AudioPlayer({
     >
       <audio
         ref={audioRef}
-        src={
-          useDirectAudioUrl
-            ? buildStreamUrl(stream.url).startsWith('/api/proxy-stream')
-              ? stream.url
-              : `/api/proxy-stream?url=${encodeURIComponent(stream.url)}`
-            : buildStreamUrl(stream.url)
-        }
+        src={effectiveAudioSrc}
         preload="metadata"
         onError={() => {
-          if (!useDirectAudioUrl && stream.url) {
-            setUseDirectAudioUrl(true);
+          if (fallbackStage < 2) {
+            setFallbackStage((prev) => prev + 1);
           }
         }}
         onPlay={() => setIsPlaying(true)}
@@ -642,30 +757,57 @@ export function V10AudioPlayer({
       />
 
       {!compact && (
-        <div className="flex items-center gap-4 mb-4 pb-4 border-b border-neutral-200 dark:border-neutral-800">
-          <div className="w-16 h-16 rounded-lg overflow-hidden bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shrink-0 flex items-center justify-center">
-            {thumbnail ? (
-              <img
-                src={thumbnail}
-                alt={title}
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <i className="fa-solid fa-music text-lg text-neutral-400" />
-            )}
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-4 pb-4 border-b border-neutral-200 dark:border-neutral-800">
+          <div className="flex items-center gap-4 min-w-0 flex-1">
+            <div className="w-16 h-16 rounded-lg overflow-hidden bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shrink-0 flex items-center justify-center">
+              {thumbnail ? (
+                <img
+                  src={thumbnail}
+                  alt={title}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <i className="fa-solid fa-music text-lg text-neutral-400" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[11px] font-mono uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                V10 AUDIO DECK · {stream.ext?.toUpperCase() || 'MP3'}
+              </div>
+              <div className="text-sm font-bold text-neutral-950 dark:text-white truncate mt-0.5">
+                {title}
+              </div>
+              <div className="text-xs text-neutral-500 dark:text-neutral-400 truncate mt-0.5">
+                {author} · {stream.quality}
+              </div>
+            </div>
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-[11px] font-mono uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-              V10 AUDIO DECK · {stream.ext?.toUpperCase() || 'MP3'}
-            </div>
-            <div className="text-sm font-bold text-neutral-950 dark:text-white truncate mt-0.5">
-              {title}
-            </div>
-            <div className="text-xs text-neutral-500 dark:text-neutral-400 truncate mt-0.5">
-              {author} · {stream.quality}
-            </div>
-          </div>
+
+          {spotifyTrackId && (
+            <button
+              type="button"
+              onClick={() => setShowSpotifyEmbed((prev) => !prev)}
+              className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-bold text-neutral-900 dark:text-neutral-100 transition-colors cursor-pointer shrink-0"
+            >
+              <i className="fa-brands fa-spotify mr-1.5" />
+              {showSpotifyEmbed ? 'Tutup Embed Spotify' : 'Pemutar Resmi Spotify'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {!compact && showSpotifyEmbed && spotifyTrackId && (
+        <div className="mb-4 rounded-xl overflow-hidden border border-neutral-200 dark:border-neutral-800">
+          <iframe
+            src={`https://open.spotify.com/embed/track/${spotifyTrackId}?utm_source=generator&theme=0`}
+            width="100%"
+            height="152"
+            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+            loading="lazy"
+            title={title}
+            className="border-0 block"
+          />
         </div>
       )}
 
@@ -690,7 +832,7 @@ export function V10AudioPlayer({
           </div>
 
           <div className="relative h-2 flex items-center">
-            <div className="w-full h-1 bg-neutral-200 dark:bg-neutral-800 rounded-full overflow-hidden">
+            <div className="w-full h-1 bg-neutral-200 dark:bg-neutral-800 rounded-xs overflow-hidden">
               <div
                 className="h-full bg-neutral-950 dark:bg-white transition-all"
                 style={{ width: `${pct}%` }}

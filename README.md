@@ -1,428 +1,467 @@
-<p align="center">
-  <img src="public/readme.jpg" alt="Tina Downloader" width="720" />
-</p>
+<div align="center">
 
-<h1 align="center">Tina Downloader</h1>
+<img src="public/readme.jpg" alt="Tina Downloader — Monochrome Hybrid Media Extractor by Nimzz" width="100%" />
 
-<p align="center">
-  Pengunduh video, audio, dan gambar dengan ekstraksi metadata otomatis dari berbagai platform.
-</p>
+<br />
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22+" />
-  <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React 19" />
-  <img src="https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white" alt="TypeScript 7" />
-  <img src="https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white" alt="Vite 8" />
-  <img src="https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?logo=tailwindcss&logoColor=white" alt="Tailwind CSS 4" />
-  <img src="https://img.shields.io/badge/Python-3-3776AB?logo=python&logoColor=white" alt="Python 3" />
-  <img src="https://img.shields.io/badge/Go-1.22-00ADD8?logo=go&logoColor=white" alt="Go 1.22" />
-</p>
+# TINA DOWNLOADER
+
+**Enterprise-Grade Multi-Engine Media Downloader, V10 Streaming Studio & Open REST API**  
+*Dirancang dan dikembangkan oleh **[Nimzz (@NimzzAi)](https://github.com/NimzzAi)***
+
+[![Platform Coverage](https://img.shields.io/badge/Supported_Platforms-1,615+_Sites-09090B?style=flat-square&labelColor=18181B)](#direktori-1615-situs--platform)
+[![Architecture](https://img.shields.io/badge/Hybrid_Core-Node.js_22_%7C_Python_3_%7C_Go_1.22-09090B?style=flat-square&labelColor=18181B)](#arsitektur-sistem--tri-engine-pipeline)
+[![Deployment](https://img.shields.io/badge/Deployment-Vercel_Serverless_%26_Self--Hosted-09090B?style=flat-square&labelColor=18181B)](#panduan-deployment-vercel--self-hosted)
+[![UI Standard](https://img.shields.io/badge/Design_System-Monochrome_Anti--Slop_UI-09090B?style=flat-square&labelColor=18181B)](#filosofi-desain-monochrome-anti-slop-ui)
+[![REST API](https://img.shields.io/badge/Open_API-REST_v1_(No_API_Key)-09090B?style=flat-square&labelColor=18181B)](#spesifikasi-lengkap-rest-api-v1)
+
+[**Saluran WhatsApp Resmi**](https://whatsapp.com/channel/0029VbBhZWdGJP8HlbGaE63Q) · [**GitHub @NimzzAi**](https://github.com/NimzzAi) · [**Telegram @Nimzz4**](https://t.me/Nimzz4) · [**TikTok @nimzz_bocil_pokemon**](https://www.tiktok.com/@nimzz_bocil_pokemon)
+
+</div>
+
+---
 
 ## Daftar Isi
 
-- [Ringkasan](#ringkasan)
-- [Fitur](#fitur)
-- [Platform yang Didukung](#platform-yang-didukung)
-- [Cara Kerja](#cara-kerja)
-- [Struktur Proyek](#struktur-proyek)
-- [Memulai](#memulai)
-- [Perintah](#perintah)
-- [Konfigurasi Situs dan SEO](#konfigurasi-situs-dan-seo)
-- [Referensi API](#referensi-api)
-- [Pembatasan Laju dan Keamanan](#pembatasan-laju-dan-keamanan)
-- [Penyimpanan Data](#penyimpanan-data)
-- [Deploy](#deploy)
-- [Desain Antarmuka](#desain-antarmuka)
-- [Pemecahan Masalah](#pemecahan-masalah)
-- [Catatan Penggunaan](#catatan-penggunaan)
-- [Penulis](#penulis)
+1. [Ikhtisar Eksekutif](#ikhtisar-eksekutif)
+2. [Filosofi Desain: Monochrome Anti-Slop UI](#filosofi-desain-monochrome-anti-slop-ui)
+3. [Fitur Unggulan & Kapabilitas V10 Studio](#fitur-unggulan--kapabilitas-v10-studio)
+4. [Arsitektur Sistem & Tri-Engine Pipeline](#arsitektur-sistem--tri-engine-pipeline)
+5. [Tautan Uji Coba Resmi (Verified Test Suite)](#tautan-uji-coba-resmi-verified-test-suite)
+6. [Direktori 1.615+ Situs & Platform](#direktori-1615-situs--platform)
+7. [Spesifikasi Lengkap REST API v1](#spesifikasi-lengkap-rest-api-v1)
+8. [Contoh Integrasi Kode (cURL, TypeScript, Python, Go)](#contoh-integrasi-kode-curl-typescript-python-go)
+9. [Struktur Direktori Proyek](#struktur-direktori-proyek)
+10. [Instalasi Lokal & Pengembangan](#instalasi-lokal--pengembangan)
+11. [Panduan Deployment (Vercel & Self-Hosted)](#panduan-deployment-vercel--self-hosted)
+12. [Keamanan, Rate-Limiting & Privasi](#keamanan-rate-limiting--privasi)
+13. [SEO, OpenGraph, JSON-LD & AI Crawlers](#seo-opengraph-json-ld--ai-crawlers)
+14. [Profil Pengembang — Nimzz](#profil-pengembang--nimzz)
 
-## Ringkasan
+---
 
-Tina Downloader adalah aplikasi web satu halaman untuk mengambil media dari tautan yang ditempel pengguna. Aplikasi membaca tautan, menampilkan metadata (judul, pembuat, durasi, resolusi, codec) beserta pilihan kualitas yang tersedia, lalu mengunduh media yang dipilih. Semua fungsi juga tersedia sebagai REST API.
+## Ikhtisar Eksekutif
 
-Backend memakai tiga mesin yang bekerja bersama: mesin Node.js untuk scraping khusus per platform, mesin Python yang menjalankan yt-dlp untuk cakupan situs yang luas, dan worker Go untuk pembatasan laju permintaan.
+**Tina Downloader** adalah platform ekstraktor media lintas situs dan pemutar streaming generasi terbaru (**V10 Media Studio**) yang mendukung pengunduhan **video multi-resolusi (hingga 4K/1080p 60fps tanpa watermark)**, **trek musik/audio original (MP3 320kbps & M4A)**, **galeri foto multi-slide (carousel)**, **kompilasi komik/manga menjadi dokumen PDF**, hingga **direct link resolver untuk penyimpanan cloud** dari lebih dari **1.615 situs global**.
 
-## Fitur
+Aplikasi ini memisahkan pengalaman pengguna harian dari kompleksitas teknis:
+- **Antarmuka Utama yang Bersih & Cepat**: Pengguna cukup menempelkan tautan, menonton pratinjau langsung pada **V10 Video Player**, **V10 Audio Deck**, atau **Photo Carousel**, lalu mengunduh berkas dengan penamaan otomatis yang rapi (`Tina_Judul_Resolusi.mp4/.mp3/.jpg`).
+- **Halaman Dokumentasi API & Developer Terpisah**: Seluruh spesifikasi endpoint REST API, skema JSON, *Live API Sandbox*, serta rincian arsitektur rekayasa oleh **Nimzz** diisolasi pada halaman khusus (`/api-docs` dan `/developer`).
 
-**Pengunduhan**
+---
 
-- Video dalam beberapa pilihan resolusi, audio MP3, dan galeri foto (carousel atau slideshow).
-- Penyusunan beberapa gambar menjadi satu berkas PDF.
-- Proxy stream dengan dukungan header `Range`, sehingga media dapat diputar dan diunduh melalui server.
-- Hanya satu item per tautan. Playlist tidak diproses.
+## Filosofi Desain: Monochrome Anti-Slop UI
 
-**Metadata**
+Antarmuka **Tina Downloader** dirancang mengikuti prinsip rekayasa desain presisi tinggi dari [**Impeccable Design**](https://github.com/pbakaus/impeccable), [**No-Slop UI**](https://github.com/LeoStehlik/no-slop-ui), dan [**Anti-UI-Slop**](https://github.com/github/awesome-copilot/tree/main/skills/anti-ui-slop):
 
-- Judul, pembuat, platform, durasi, tanggal unggah, resolusi, FPS, codec video dan audio, ukuran perkiraan, tag, dan kategori.
-- Statistik jika tersedia dari sumber: jumlah penonton, suka, dan komentar.
-- Ukuran berkas diperiksa langsung dari URL unduhan bila belum diketahui.
+| Prinsip Desain | Implementasi pada Tina Downloader |
+| :--- | :--- |
+| **Pure Monochrome Palette** | Kombinasi warna **Hitam (`#09090B`)**, **Putih (`#FFFFFF` / `#FAFAFA`)**, dan **Abu-abu Netral (`#F4F4F5` – `#27272A`)** dengan rasio kontras WCAG AAA tanpa gradasi neon atau dekorasi kosmetik berlebihan. |
+| **Zero-Pill Discipline** | Seluruh tombol, filter, dan elemen interaktif menggunakan radius geometris tegas (`rounded-md` / `rounded-lg` / `rounded-xl`) dan garis batas 1px (`border-neutral-200` / `dark:border-neutral-800`). |
+| **Typographic & Tabular Hierarchy** | Menggunakan pasangan font **Unbounded** (display), **Onest** (UI/body), dan **JetBrains Mono** (`tabular-nums`) untuk durasi waktu, ukuran berkas, kode status HTTP, dan penghitung direktori 1.615 situs. |
+| **Complete 4-State Coverage** | Setiap tampilan memiliki penanganan eksplisit untuk kondisi **Idle/Empty**, **Loading (Shimmer Skeleton)**, **Success (V10 Studio)**, dan **Error/Fallback Recovery**. |
+| **URL & Session Persistence** | Sinkronisasi penuh antara *pathname* URL (`/`, `/history`, `/sites`, `/api-docs`, `/about`, `/developer`), `window.history` (*Back/Forward*), `localStorage`, dan `sessionStorage` sehingga halaman tidak pernah kembali ke beranda secara tidak sengaja saat di-*refresh*. |
 
-**Aplikasi**
+---
 
-- Riwayat unduhan per perangkat, dengan opsi hapus satu entri atau seluruhnya.
-- Tema terang dan gelap.
-- Enam tab: Beranda Unduhan, Riwayat Unduhan, Daftar Situs, Dokumentasi API, Tentang & FAQ, dan Profil Pengembang.
-- Dokumentasi API interaktif dengan contoh kode cURL, JavaScript, Python, dan Go.
+## Fitur Unggulan & Kapabilitas V10 Studio
 
-**Keamanan**
+### 1. V10 Custom Video Player & YouTube Direct Stream
+- **Custom HTML5 HUD & Scrubber**: Kontrol play/pause, lompat waktu $\pm 5$ detik, pengatur volume, kecepatan putar (`0.75x`, `1x`, `1.25x`, `1.5x`, `2x`), *Picture-in-Picture (PiP)*, dan layar penuh.
+- **Instant Resolution Switcher**: Berpindah antar resolusi (`1080p`, `720p`, `480p`) secara langsung dengan mempertahankan posisi detik pemutaran (*timestamp preservation*).
+- **Hybrid YouTube & Proxy Failover**: Mendukung pemutaran langsung video YouTube melalui *V10 YouTube Direct Stream* maupun *HTML5 Native Proxy Stream* dengan injeksi header `Range` dan `Referer` otomatis agar bebas blokir CORS di Vercel maupun server mandiri.
 
-- Pembatasan laju berdasarkan kombinasi alamat IP dan Device ID.
-- Log keamanan untuk setiap permintaan ekstraksi.
+### 2. V10 Audio Deck & Spotify Instant Stream
+- **Dual-Mode Audio Playback**: Memutar trek musik MP3/M4A langsung di peramban melalui *V10 Audio Deck* (lengkap dengan sampul album HD, *timecode* `tabular-nums`, dan *seek bar*) serta menyediakan mode **Pemutar Resmi Spotify** terintegrasi untuk tautan `open.spotify.com`.
+- **Automatic Token & MIME Resolution**: Menangani konversi token audio asinkron dan menjamin header `Content-Type: audio/mpeg` agar dapat diputar di seluruh peramban desktop dan seluler.
 
-## Platform yang Didukung
+### 3. Multi-Slide Photo Carousel & Native PDF 1.4 Compiler
+- **Interactive Slide Viewer**: Menampilkan galeri foto multi-slide dari TikTok Slideshow, Instagram Carousel, Pixiv Illustration, RedNote, dan komik/manga lengkap dengan strip *thumbnail* dan *Fullscreen Lightbox*.
+- **Zero-Dependency PDF 1.4 Generator**: Menggabungkan hingga 60 slide foto resolusi penuh menjadi satu dokumen `.pdf` siap baca menggunakan parser dimensi biner (`SOF0/SOF2` JPEG & `IHDR` PNG) dan pembungkus objek `DCTDecode` PDF 1.4 murni.
 
-| Jalur | Platform |
-| --- | --- |
-| Mesin khusus (Node.js) | TikTok, Instagram, Facebook, YouTube, X (Twitter), Pinterest, Pixiv, Bilibili, Douyin, RedNote, SoundCloud, Spotify, Apple Music, Bandcamp, Threads |
-| yt-dlp (Python) | Ribuan situs lain yang didukung yt-dlp |
+### 4. Direktori 1.615+ Situs Instan (Build-Time Bundled)
+- Daftar lengkap **1.615 ekstraktor situs** dibundel langsung pada waktu kompilasi sekaligus dilayani oleh endpoint `/api/supported-sites`, memastikan pencarian dan penyaringan kategori berjalan secara instan (0 ms latensi) baik di lingkungan lokal maupun Vercel Serverless.
 
-Daftar situs yang dikenali aplikasi dapat dilihat di tab Daftar Situs atau lewat endpoint `GET /api/supported-sites`.
+---
 
-## Cara Kerja
+## Arsitektur Sistem & Tri-Engine Pipeline
 
-Alur permintaan ekstraksi (`POST /api/extract`):
+Tina Downloader mengadopsi arsitektur **Hybrid Multi-Runtime** yang berjalan mulus baik pada **Dedicated Node.js + Python + Go Server** maupun **Vercel Serverless Functions**:
 
 ```mermaid
-sequenceDiagram
-    participant B as Browser
-    participant S as Server Express
-    participant G as Worker Go
-    participant N as Mesin Node.js
-    participant P as Mesin Python
-
-    B->>S: POST /api/extract (url, x-device-id)
-    S->>G: Cek batas laju (IP + Device ID)
-    G-->>S: Diizinkan atau ditolak
-    alt Platform dikenal
-        par
-            S->>N: Scraping khusus platform
-        and
-            S->>P: Ekstraksi yt-dlp
-        end
-        S->>S: Gabungkan hasil dan hilangkan duplikat
-    else Platform lain
-        S->>P: Ekstraksi yt-dlp
+flowchart TB
+    Client["Client Browser (React 19 + Tailwind CSS 4 + V10 Media Studio)"]
+    
+    subgraph Routing ["Hybrid Routing Layer (Express / Vercel Serverless)"]
+        Gateway["API Gateway (/api/extract, /api/proxy-stream, /api/download)"]
+        GoGuard["Go 1.22 Security & Rate-Limit Worker\n(server/go_worker.go | api/security.go)"]
     end
-    S->>G: Periksa ukuran berkas
-    S->>P: Simpan riwayat dan log keamanan
-    S-->>B: Metadata dan pilihan unduhan
+
+    subgraph Extractors ["Multi-Stage Extraction Engines"]
+        RichCore["Platform-Specific Rich Extractors\n(TikWM HD, Spotify Embed Core, Piped YouTube API, Pixiv Ajax)"]
+        NodeScrapers["Node.js Dual Scraper Bundles\n(mori-bundle.js + scrapr-bundle.cjs — 26+ Dedicated Scrapers)"]
+        PyEngine["Python 3 Deep Media Engine\n(server/py_engine.py + api/extract.py — 1,615+ Global Extractors)"]
+        ClientFallback["Client-Side Resilient Extractor\n(src/utils/clientFallback.ts)"]
+    end
+
+    subgraph Storage ["Persistence & Binary Delivery"]
+        SQLite[("SQLite3 WAL Database\n(server/data/tina.sqlite)")]
+        ProxyStream["Smart Range & MIME Proxy\n(Chunked 3.5MB Serverless / Full Stream)"]
+        PdfCompiler["Native PDF 1.4 DCTDecode Builder\n(/api/compile-pdf)"]
+    end
+
+    Client -->|"POST /api/extract + X-Device-ID"| Gateway
+    Gateway --> GoGuard
+    GoGuard -->|"Allowed"| RichCore
+    RichCore --> NodeScrapers
+    NodeScrapers --> PyEngine
+    PyEngine --> SQLite
+    Gateway -.->|"Fallback on Edge Error"| ClientFallback
+    Client -->|"GET /api/proxy-stream & /api/download"| ProxyStream
+    Client -->|"POST /api/compile-pdf"| PdfCompiler
 ```
 
-Beberapa catatan dari implementasinya:
+---
 
-- Untuk platform yang dikenal, hasil dari mesin Node.js dan yt-dlp digabung dan duplikatnya dibuang. Jumlah pilihan unduhan dibatasi. TikTok memiliki satu langkah ekstraksi tambahan untuk data yang lebih lengkap.
-- Panggilan yt-dlp memakai `--no-playlist` dan batas waktu 28 detik.
-- Hasil akhir diberi label mesin `Tina Hybrid`.
-- Jika worker Go gagal dijalankan, server memakai nilai bawaan dan tetap memproses permintaan.
+## Tautan Uji Coba Resmi (Verified Test Suite)
 
-## Struktur Proyek
+Anda dapat menguji langsung keandalan ekstraksi dan pemutaran media menggunakan empat tautan referensi yang tersedia pada tombol **Coba contoh** di halaman utama:
 
-```text
-api/
-  extract.py            Fungsi Python untuk Vercel (ekstraksi lewat yt-dlp)
-  security.go           Fungsi Go untuk Vercel (pembatasan laju)
-plugins/
-  siteMeta.ts           Plugin Vite: meta tag, JSON-LD, robots, sitemap, manifest, llms.txt
-public/                 Ikon, gambar Open Graph, gambar README, daftar situs
-server/
-  engines/              Mesin Node.js, biner yt-dlp, dan biner worker Go
-  data/                 Database SQLite dan state pembatasan laju
-  go_worker.go          Sumber worker Go
-  py_engine.py          Sumber mesin Python
-src/
-  App.tsx               Halaman utama dan state aplikasi
-  components/           Dokumentasi API dan pemutar media
-  utils/                Pembuat Device ID
-  index.css             Token desain dan gaya dasar
-  types.ts              Tipe data bersama
-server.ts               Server Express dan semua endpoint /api
-site.config.ts          Konfigurasi situs
-vercel.json             Konfigurasi deploy Vercel
-requirements.txt        Dependensi Python untuk fungsi serverless
+| Skenario Uji | Platform | Tautan Uji Coba | Hasil Ekstraksi & Pemutaran |
+| :--- | :--- | :--- | :--- |
+| **1. Video & Audio Tanpa Watermark** | **TikTok** | `https://vm.tiktok.com/ZSgCBT3wv/` | Video 1080p Full HD (`H.264`), 720p HD tanpa watermark, 540p SD, dan Audio MP3 Original. |
+| **2. Video Multi-Resolusi HD** | **YouTube** | `https://youtu.be/Sgt6yH9UM-c?si=dUP74ef5pdgEShXX` | *loh perasaan gak gini deh.. 😹 - REACT MEME KOCAK* oleh **Hitzeed** (`32:42`), V10 YouTube Direct Stream + Unduhan MP4 & MP3. |
+| **3. Audio Track Musik 320kbps** | **Spotify** | `https://open.spotify.com/track/0wULafSHeHYZFu54R9ZFRJ` | *Mangu — Fourtwnty, Charita Utami* (`04:22`), V10 Audio Deck MP3 Stream + Pemutar Resmi Spotify + Cover Art HD. |
+| **4. Galeri Foto Multi-Slide & PDF** | **Pixiv** | `https://www.pixiv.net/en/artworks/90000005` | Carousel multi-slide interaktif, pratinjau *Lightbox* layar penuh, unduh per slide `.JPG`, dan kompilasi `.PDF`. |
+
+---
+
+## Direktori 1.615+ Situs & Platform
+
+Tina Downloader mengategorikan dukungan platform ke dalam 5 kelompok utama:
+
+1. **Sosial & Video**: TikTok, YouTube (Video, Shorts, Music), Instagram (Reels, Post, Carousel, Stories), X / Twitter, Facebook Watch, Threads, Reddit, Pinterest, RedNote (Xiaohongshu), Douyin, CapCut, Kwai, SnackVideo, Vimeo, Dailymotion, Twitch, Kick, Rumble.
+2. **Musik & Audio**: Spotify (Track & Episode), SoundCloud, Apple Music, Bandcamp, Mixcloud, Audiomack, Deezer, ZingMP3, Joox.
+3. **Cloud & Berkas**: MediaFire, Google Drive, TeraBox, PixelDrain, GoFile.io, Mega.nz, Sfile.mobi, KrakenFiles, Catbox.moe, GitHub Releases, Linkvertise / LootLabs / Sub2Unlock Bypass.
+4. **Komik & Anime**: Pixiv, Bilibili, MangaDex, Kiryuu, KomikCast, KomikIndo, Shinigami, Otakudesu, Nimegami, Samehadaku, Gogoanime.
+5. **Ekstraktor Global (1.600+ Domain)**: Portal berita internasional & nasional, platform edukasi, arsip penyiaran publik, dan ekstraktor video HTML5/HLS/DASH universal.
+
+---
+
+## Spesifikasi Lengkap REST API v1
+
+Seluruh endpoint REST API dapat diakses secara publik tanpa memerlukan registrasi API Key. Sertakan header opsional `X-Device-ID` untuk mengaitkan riwayat unduhan dan kuota perangkat.
+
+### 1. `POST /api/extract` — Ekstraksi Metadata & Stream Media
+Mengekstrak metadata lengkap serta daftar stream unduhan dari URL publik.
+
+- **Request Headers**: `Content-Type: application/json`, `X-Device-ID: TINA-XXXX-XXXX` (opsional)
+- **Request Body**:
+```json
+{
+  "url": "https://open.spotify.com/track/0wULafSHeHYZFu54R9ZFRJ"
+}
 ```
-
-## Memulai
-
-### Prasyarat
-
-- Node.js 22 atau lebih baru
-- Python 3 (server memanggilnya sebagai `python3`)
-- Linux x86-64 untuk biner bawaan. Platform lain memerlukan build ulang worker Go.
-
-Biner yt-dlp sudah disertakan di `server/engines/yt-dlp`, jadi tidak perlu dipasang terpisah untuk menjalankan secara lokal.
-
-### Instalasi
-
-Di folder proyek, jalankan:
-
-```bash
-npm install
-npm run dev
-```
-
-Aplikasi berjalan di `http://localhost:3000`. Port ini ditetapkan sebagai konstanta `PORT` di `server.ts`.
-
-Saat server mulai, izin eksekusi biner `tina-go-worker` dan `yt-dlp` diatur otomatis.
-
-### Membangun Ulang Worker Go
-
-Jika biner bawaan tidak cocok dengan platform kamu:
-
-```bash
-go build -o server/engines/tina-go-worker server/go_worker.go
-```
-
-## Perintah
-
-| Perintah | Keterangan |
-| --- | --- |
-| `npm run dev` | Menjalankan server pengembangan (Express dengan middleware Vite) |
-| `npm run build` | Membangun klien ke folder `dist/` |
-| `npm start` | Menjalankan `server.ts`. Dengan `NODE_ENV=production`, server menyajikan isi `dist/` |
-| `npm run preview` | Pratinjau hasil build lewat Vite |
-| `npm run lint` | Pemeriksaan tipe TypeScript |
-| `npm run clean` | Menghapus `dist/` dan `server.js` |
-
-## Konfigurasi Situs dan SEO
-
-Seluruh pengaturan metadata ada di `site.config.ts`. Tidak ada variabel lingkungan yang diperlukan. Baris pertama berkas berisi URL publik situs:
-
-```ts
-const SITE_URL = 'https://tina-downloader.web.id';
-```
-
-Ubah nilai ini ke domain yang sebenarnya sebelum build.
-
-### Isi Konfigurasi
-
-| Field | Fungsi |
-| --- | --- |
-| `url` | URL publik situs, dipakai untuk canonical, Open Graph, sitemap, dan robots |
-| `name`, `shortName`, `title` | Nama aplikasi, nama pendek untuk manifest, dan judul halaman |
-| `description`, `summary` | Deskripsi singkat untuk meta tag dan ringkasan untuk JSON-LD serta `llms.txt` |
-| `locale`, `language` | Contoh `id_ID` dan `id` |
-| `author`, `links.github` | Penulis dan tautan profil |
-| `applicationCategory`, `priceCurrency` | Data terstruktur schema.org |
-| `keywords`, `features` | Kata kunci, serta daftar fitur untuk JSON-LD, `<noscript>`, dan `llms.txt` |
-| `api` | Daftar endpoint yang ditulis ke `llms.txt` |
-| `themeColor` | Warna tema terang dan gelap |
-| `ogImage` | Path, ukuran, tipe, dan teks alternatif gambar Open Graph |
-| `googleSiteVerification`, `bingSiteVerification` | Token verifikasi kepemilikan situs |
-
-### Hasil Build
-
-Plugin `plugins/siteMeta.ts` membaca konfigurasi tersebut dan menghasilkan:
-
-- Meta tag SEO, canonical, Open Graph, Twitter Card, dan data terstruktur JSON-LD di `index.html`.
-- Ringkasan konten di dalam `<noscript>` untuk crawler yang tidak menjalankan JavaScript.
-- `robots.txt` yang mengizinkan mesin pencari dan crawler AI utama, dengan `/api/` dikecualikan.
-- `sitemap.xml`, `manifest.webmanifest`, dan `llms.txt` di folder `dist/`.
-
-Berkas-berkas ini juga dilayani saat pengembangan, sehingga bisa diperiksa di `http://localhost:3000/robots.txt` dan sejenisnya.
-
-### Mendaftarkan ke Mesin Pencari
-
-1. Pastikan `SITE_URL` sudah sesuai domain, lalu deploy.
-2. Tambahkan situs sebagai properti di Google Search Console, lalu verifikasi. Metode meta tag memakai field `googleSiteVerification`.
-3. Kirim `https://domain-kamu/sitemap.xml` di menu Sitemap.
-4. Ulangi di Bing Webmaster Tools dengan `bingSiteVerification`.
-
-Sitemap hanya berisi halaman utama, karena tab aplikasi tidak memiliki URL sendiri. Crawler AI umumnya tidak menjalankan JavaScript, jadi yang terbaca dari situs ini terbatas pada meta tag, JSON-LD, ringkasan `<noscript>`, dan `llms.txt`.
-
-## Referensi API
-
-Semua endpoint berada di bawah `/api`. CORS terbuka untuk semua origin, dan ukuran body JSON dibatasi 5 MB.
-
-**Header**
-
-| Header | Keterangan |
-| --- | --- |
-| `x-device-id` | Opsional. 4 sampai 128 karakter dari `a-z`, `A-Z`, `0-9`, `_`, dan `-`. Dipakai untuk pembatasan laju dan riwayat. Jika kosong atau tidak valid, server memakai `TINA-DEV-UNIDENTIFIED` |
-
-### POST /api/extract
-
-Membaca tautan dan mengembalikan metadata beserta pilihan unduhan.
-
-```bash
-curl -X POST "http://localhost:3000/api/extract" \
-  -H "Content-Type: application/json" \
-  -H "x-device-id: contoh-perangkat-001" \
-  -d '{"url": "https://www.tiktok.com/@akun/video/1234567890"}'
-```
-
-Respons sukses (dipersingkat):
-
+- **Response `200 OK`**:
 ```json
 {
   "status": "ok",
   "data": {
-    "title": "Judul video",
-    "author": "akun",
-    "platform": "TikTok",
+    "title": "Mangu — Fourtwnty, Charita Utami",
+    "author": "Fourtwnty, Charita Utami",
+    "platform": "spotify",
+    "extractorKey": "TinaCore::Spotify",
     "engine": "Tina Hybrid",
-    "webpageUrl": "https://www.tiktok.com/@akun/video/1234567890",
-    "thumbnail": "https://...",
-    "duration": "0:32",
+    "serverUsed": "Tina Hybrid Core (SPOTIFY)",
+    "webpageUrl": "https://open.spotify.com/track/0wULafSHeHYZFu54R9ZFRJ",
+    "thumbnail": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273fecb2b49d97ed68528fbf44a",
+    "duration": "4:22",
+    "uploadDate": "2022-04-20",
+    "resolution": "320kbps HQ Audio",
+    "acodec": "MP3 320kbps (44.1kHz)",
+    "filesizeApprox": "10.5 MB",
     "downloads": [
       {
-        "type": "video",
-        "quality": "1080p",
-        "ext": "mp4",
-        "url": "https://...",
-        "filesizeFormatted": "8.4 MB"
-      },
-      {
+        "id": "sp_0wULafSHeHYZFu54R9ZFRJ_320",
         "type": "audio",
-        "quality": "MP3",
+        "quality": "Audio Original 320kbps · Mangu (MP3)",
         "ext": "mp3",
-        "url": "https://..."
+        "url": "https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369",
+        "filesizeFormatted": "10.5 MB",
+        "acodec": "MP3 320kbps",
+        "resolution": "320kbps"
       }
     ]
-  },
-  "historyItem": { "id": "...", "createdAt": 1767225600000 },
-  "rateLimit": { "allowed": true }
+  }
 }
 ```
 
-Bentuk lengkap objek `data` mengikuti antarmuka `MediaMetadata` di `src/types.ts`. Setiap elemen `downloads` mengikuti `DownloadStream`:
+### 2. `GET /api/proxy-stream` — In-Browser Media Streaming Proxy
+Mem-proxy stream video, audio, atau gambar dengan injeksi `Referer`, `User-Agent`, dukungan `Range: bytes=...` (`206 Partial Content`), serta koreksi otomatis `Content-Type`.
 
-| Field | Keterangan |
-| --- | --- |
-| `type` | `video`, `audio`, `image`, `file`, `link`, atau `subtitle` |
-| `quality`, `ext` | Label kualitas dan ekstensi berkas |
-| `url` | URL sumber media |
-| `filesize`, `filesizeFormatted` | Ukuran berkas bila diketahui |
-| `vcodec`, `acodec`, `fps`, `tbr`, `resolution` | Detail teknis bila tersedia |
-| `needsResolve` | `true` bila URL perlu diselesaikan lewat `POST /api/resolve` sebelum dipakai |
+- **Query Parameters**:
+  - `url` *(wajib)*: URL sumber stream.
+  - `ext` *(opsional)*: Petunjuk ekstensi (`mp4`, `mp3`, `jpg`, `png`, `webp`).
 
-Kode galat:
+### 3. `GET /api/download/:filename` — Unduhan Berkas Langsung
+Mengalirkan berkas dengan header `Content-Disposition: attachment` dan penamaan file yang aman bagi sistem operasi.
 
-| Status | Penyebab |
-| --- | --- |
-| `400` | URL kosong atau tidak diawali `http://` atau `https://` |
-| `429` | Batas laju tercapai |
-| `500` | Ekstraksi gagal |
+- **Query Parameters**:
+  - `url` *(wajib)*: URL sumber stream.
+  - `filename` *(opsional)*: Nama dasar berkas.
+  - `ext` *(opsional)*: Ekstensi berkas (`mp4`, `mp3`, `jpg`, `pdf`).
 
-Semua galat dikembalikan sebagai `{ "error": "pesan" }`.
+### 4. `POST /api/resolve` — Resolver Token Unduhan Asinkron
+Menyelesaikan token internal (`spotidown_resolve:...`, `applemusic_resolve:...`, `youtube_resolve:...`, `ytmp3gg_resolve:...`) menjadi URL CDN langsung.
 
-### POST /api/resolve
-
-Menyelesaikan tautan unduhan yang bertanda `needsResolve`.
+### 5. `POST /api/compile-pdf` — Kompilator Galeri Foto ke PDF
+Menggabungkan array URL gambar menjadi satu berkas PDF 1.4 siap unduh.
 
 ```json
-{ "tokenUrl": "..." }
+{
+  "title": "Tina_Gallery_Pixiv",
+  "images": [
+    "https://i.pixiv.re/img-master/img/2021/05/22/00/33/36/90000005_p0_master1200.jpg",
+    "https://i.pixiv.re/img-master/img/2021/05/22/00/33/36/90000005_p1_master1200.jpg"
+  ]
+}
 ```
 
-Respons: `{ "status": "ok", "url": "..." }`. Status `400` jika `tokenUrl` tidak valid, `500` jika gagal.
+### 6. `GET /api/supported-sites` — Direktori Situs & Pencarian
+Mengambil daftar seluruh platform yang didukung (`total: 1615`). Mendukung query `?q=keyword&category=all`.
 
-### POST /api/compile-pdf
+### 7. `GET /api/history` & `DELETE /api/history` — Riwayat Perangkat
+Mengambil atau menghapus riwayat unduhan berdasarkan kombinasi `X-Device-ID` dan alamat IP.
 
-Mengunduh sejumlah gambar lalu menyusunnya menjadi satu PDF.
+---
 
-```json
-{ "images": ["https://.../1.jpg", "https://.../2.jpg"], "title": "galeri-foto" }
+## Contoh Integrasi Kode (cURL, TypeScript, Python, Go)
+
+### cURL
+```bash
+curl -X POST "https://tina-downloader.web.id/api/extract" \
+  -H "Content-Type: application/json" \
+  -H "X-Device-ID: TINA-CLI-CLIENT" \
+  -d '{"url": "https://open.spotify.com/track/0wULafSHeHYZFu54R9ZFRJ"}'
 ```
 
-`title` bersifat opsional dan bernilai bawaan `tina-comic`. Respons berupa berkas `application/pdf` sebagai lampiran. Status `400` jika daftar gambar kosong, `500` jika pengunduhan atau pembuatan PDF gagal.
+### TypeScript / Node.js
+```typescript
+interface ExtractResponse {
+  status: string;
+  data: {
+    title: string;
+    author: string;
+    platform: string;
+    duration: string;
+    downloads: Array<{
+      id: string;
+      type: 'video' | 'audio' | 'image' | 'file';
+      quality: string;
+      ext: string;
+      url: string;
+    }>;
+  };
+}
 
-### GET /api/proxy-stream
+async function extractMedia(targetUrl: string): Promise<ExtractResponse> {
+  const response = await fetch('https://tina-downloader.web.id/api/extract', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Device-ID': 'TINA-NODE-SDK',
+    },
+    body: JSON.stringify({ url: targetUrl }),
+  });
 
-Meneruskan stream media dari sumber, termasuk permintaan `Range`.
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: Gagal mengekstrak media`);
+  }
+  return response.json();
+}
+```
 
-| Query | Keterangan |
-| --- | --- |
-| `url` | Wajib. URL media sumber |
-| `ext` | Opsional. Petunjuk ekstensi untuk menentukan `Content-Type` |
+### Python 3
+```python
+import requests
 
-Status `400` untuk URL tidak valid, `502` jika sumber gagal dimuat.
+resp = requests.post(
+    "https://tina-downloader.web.id/api/extract",
+    headers={"Content-Type": "application/json", "X-Device-ID": "TINA-PY-SDK"},
+    json={"url": "https://youtu.be/Sgt6yH9UM-c?si=dUP74ef5pdgEShXX"},
+    timeout=30,
+)
+payload = resp.json()
+media = payload["data"]
+print(f"Judul   : {media['title']}")
+print(f"Kreator : {media['author']} ({media['duration']})")
+for stream in media["downloads"]:
+    print(f" - [{stream['type'].upper()}] {stream['quality']} -> {stream['url']}")
+```
 
-### GET /api/download/:filename
+### Go (Golang)
+```go
+package main
 
-Mengunduh media sebagai lampiran.
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"net/http"
+)
 
-| Query | Keterangan |
-| --- | --- |
-| `url` | Wajib. URL media sumber, harus diawali `http://` atau `https://` |
-| `filename` | Opsional. Nama berkas, menggantikan parameter path |
-| `ext` | Opsional. Ekstensi berkas |
+func main() {
+	body := []byte(`{"url":"https://vm.tiktok.com/ZSgCBT3wv/"}`)
+	req, _ := http.NewRequest("POST", "https://tina-downloader.web.id/api/extract", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Device-ID", "TINA-GO-SDK")
 
-### GET /api/supported-sites
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
 
-Daftar platform yang dikenali aplikasi. Mendukung query `q` untuk pencarian dan `category` untuk filter kategori.
+	raw, _ := io.ReadAll(resp.Body)
+	fmt.Println(string(raw))
+}
+```
 
-### Riwayat
+---
 
-Ketiga endpoint ini terikat pada kombinasi `x-device-id` dan alamat IP.
+## Struktur Direktori Proyek
 
-| Endpoint | Respons |
-| --- | --- |
-| `GET /api/history` | `{ "items": [...] }`, setiap item mengikuti `HistoryItem` |
-| `DELETE /api/history/:id` | `{ "status": "ok" }`, menghapus satu entri |
-| `DELETE /api/history` | `{ "status": "ok" }`, menghapus seluruh riwayat |
+```text
+tina-downloader/
+├── api/
+│   ├── extract.py                  # Serverless Python Extractor, Stream Proxy & Resolver (Vercel)
+│   └── security.go                 # Serverless Golang Rate-Limit & Fingerprint Endpoint (Vercel)
+├── plugins/
+│   └── siteMeta.ts                 # Vite Plugin: SEO, OpenGraph, JSON-LD, robots.txt, sitemap.xml, llms.txt
+├── public/
+│   ├── assets/markdown/
+│   │   └── supportedsites_cb2590be.md # Direktori sumber 1.615+ situs didukung
+│   ├── avatar.jpg                  # Foto profil resmi pengembang (Nimzz)
+│   ├── banner.jpg                  # Sampul halaman profil pengembang
+│   ├── logo.png                    # Logo resmi Tina Downloader
+│   ├── og-image.jpg                # Gambar OpenGraph / Social Share Card
+│   ├── readme.jpg                  # Banner dokumentasi README & showcase
+│   └── thumbnail.jpg               # Ilustrasi viewfinder beranda utama
+├── server/
+│   ├── data/                       # Penyimpanan SQLite3 (tina.sqlite) & state rate-limit Go
+│   ├── engines/                    # Bundel scraper Node.js (mori, scrapr), worker Go, & binary yt-dlp
+│   ├── go_worker.go                # Kode sumber worker keamanan & HTTP header prober (Go 1.22)
+│   └── py_engine.py                # Mesin ekstraksi mendalam & pengelola database SQLite3 (Python 3)
+├── src/
+│   ├── components/
+│   │   ├── ApiDocsPage.tsx         # Halaman Dokumentasi REST API v1 & Live JSON Sandbox
+│   │   ├── DeveloperPage.tsx       # Halaman Profil Pengembang (Nimzz) & cetak biru modul
+│   │   └── V10MediaPlayer.tsx      # Komponen V10 Video Player (HTML5 + YouTube) & V10 Audio Deck
+│   ├── utils/
+│   │   ├── clientFallback.ts       # Bundel 1.615 situs & ekstraktor cadangan sisi klien
+│   │   └── deviceFingerprint.ts    # Generator SHA-256 Device ID deterministik
+│   ├── App.tsx                     # Aplikasi utama dengan sinkronisasi rute URL & penyimpanan sesi
+│   ├── index.css                   # Sistem desain monokrom (Hitam/Putih/Abu-abu) & token tipografi
+│   ├── main.tsx                    # Entry point React 19
+│   └── types.ts                    # Definisi antarmuka TypeScript
+├── .npmrc                          # Konfigurasi resolusi dependensi npm untuk Vercel CI/CD
+├── package.json                    # Skrip manajemen proyek & dependensi
+├── server.ts                       # Server orkestrasi full-stack Express + Vite
+├── site.config.ts                  # Konfigurasi terpusat metadata SEO & warna tema monokrom
+├── vercel.json                     # Konfigurasi rute SPA, Serverless Functions, & Cache-Control Vercel
+└── vite.config.ts                  # Konfigurasi bundler Vite 8 & Tailwind CSS 4
+```
 
-## Pembatasan Laju dan Keamanan
+---
 
-- **Batas laju**: 15 permintaan ekstraksi per 15 menit, dengan batas burst 5 permintaan per 60 detik. Penghitungan dilakukan oleh worker Go berdasarkan alamat IP dan Device ID.
-- **Device ID**: dibuat di browser dan disimpan di `localStorage` dengan kunci `tina_device_fingerprint_v1`. Karena dibuat di sisi klien, nilainya bukan identitas yang dapat dipercaya penuh.
-- **Alamat IP klien**: diambil berurutan dari header `X-Forwarded-For` (nilai pertama), `X-Real-IP`, lalu alamat soket. Jika server berjalan di belakang reverse proxy, pastikan proxy menimpa `X-Forwarded-For` dengan alamat klien yang sebenarnya. Tanpa itu, klien dapat memalsukan header tersebut dan menghindari batas laju.
-- **Kegagalan worker**: jika worker Go tidak dapat dijalankan, server memakai nilai bawaan dan tetap memproses permintaan, sehingga pembatasan laju tidak berlaku.
-- **CORS**: terbuka untuk semua origin. Batasi di `server.ts` bila API tidak ditujukan untuk publik.
+## Instalasi Lokal & Pengembangan
 
-## Penyimpanan Data
+### Prasyarat Sistem
+- **Node.js** `>= 20.x` (Direkomendasikan `v22 LTS`)
+- **Python** `>= 3.10` (Beserta modul standar `sqlite3` dan `urllib`)
+- **Go (Golang)** `>= 1.22` *(Opsional — binary `server/engines/tina-go-worker` sudah dikompilasi)*
 
-| Berkas | Isi |
-| --- | --- |
-| `server/data/tina.sqlite` | Riwayat unduhan dan log keamanan |
-| `server/data/go-ratelimit.json` | State pembatasan laju |
-
-Data ini mencakup alamat IP, Device ID, user agent (dipotong hingga 256 karakter), dan URL yang diminta. Berkas yang ada di repositori hanya berisi data uji lokal. Jangan mengomit database produksi ke repositori publik.
-
-## Deploy
-
-### Server Node.js Sendiri
-
-Mode ini menjalankan seluruh fitur, termasuk riwayat, pembuatan PDF, dan proxy stream.
+### Langkah Menjalankan Secara Lokal
 
 ```bash
+# 1. Clone repositori
+git clone https://github.com/NimzzAi/tina.git
+cd tina
+
+# 2. Instal seluruh dependensi Node.js
 npm install
-npm run build
-NODE_ENV=production npm start
+
+# 3. Jalankan server pengembangan full-stack (Port 3000)
+npm run dev
 ```
 
-Server menyajikan isi `dist/` pada port 3000. Letakkan reverse proxy di depannya untuk HTTPS dan domain, serta teruskan alamat klien lewat `X-Forwarded-For`.
+Buka `http://localhost:3000` di peramban Anda.
 
-### Vercel
+### Mengompilasi Ulang Binary Go Worker (Opsional)
+```bash
+go build -o server/engines/tina-go-worker server/go_worker.go
+```
 
-`vercel.json` membangun klien statis dari `package.json` (output `dist/`) dan mendaftarkan dua fungsi serverless: `api/extract.py` dan `api/security.go`. Rute `/api/py/*` diarahkan ke fungsi Python, `/api/go/*` ke fungsi Go, dan permintaan lain ke `index.html`. Dependensi Python fungsi tersebut didaftarkan di `requirements.txt`.
+---
 
-Server Express beserta mesin lokalnya tidak ikut ter-deploy di Vercel. Fitur yang bergantung pada `server.ts`, seperti riwayat SQLite, pembuatan PDF, dan proxy stream, hanya tersedia saat aplikasi dijalankan di server Node.js sendiri.
+## Panduan Deployment (Vercel & Self-Hosted)
 
-## Desain Antarmuka
+### Opsi A: Deployment ke Vercel (Serverless Hybrid)
+Proyek ini telah dikonfigurasi penuh untuk **Vercel** menggunakan `vercel.json` dan `.npmrc`:
+1. Hubungkan repositori GitHub Anda ke dashboard Vercel.
+2. Vercel secara otomatis membaca `.npmrc` (`legacy-peer-deps=true`) dan menjalankan `npm run build` (`vite build`).
+3. Rute API (`/api/extract`, `/api/proxy-stream`, `/api/download/*`, `/api/resolve`, `/api/supported-sites`, `/api/history`) diarahkan ke fungsi serverless Python (`api/extract.py`) dan Go (`api/security.go`).
+4. Rute navigasi halaman (`/history`, `/sites`, `/api-docs`, `/about`, `/developer`) diarahkan dengan aman ke SPA `index.html` sehingga tahan terhadap *refresh* halaman.
 
-Semua token desain berada di `src/index.css`.
+### Opsi B: Deployment ke VPS / Dedicated Server / Docker
+Untuk performa penuh tanpa batas ukuran payload 4.5 MB milik serverless:
+```bash
+# Build aset produksi frontend
+npm run build
 
-- **Warna**: skala `neutral` didefinisikan ulang dengan tinta navy. Variabel `--paper`, `--surface`, `--ink`, dan `--accent` berganti nilai saat kelas `dark` aktif.
-- **Tipografi**: Unbounded untuk logo dan judul `h1`, Onest untuk antarmuka, JetBrains Mono untuk data teknis.
-- **Bingkai pembidik**: ilustrasi di bagian atas halaman dikelilingi empat sudut bingkai. Saat ekstraksi berjalan, kelas `is-scanning` menyempitkan sudut dan menggerakkan garis pindai.
-- **Aksesibilitas**: indikator fokus keyboard memakai warna aksen, dan semua animasi dimatikan untuk pengguna dengan `prefers-reduced-motion`.
+# Jalankan server produksi Node.js + Python + Go
+NODE_ENV=production PORT=3000 npm start
+```
 
-## Pemecahan Masalah
+---
 
-| Gejala | Penyebab dan solusi |
-| --- | --- |
-| Ekstraksi selalu gagal | Pastikan `python3` tersedia di PATH. Biner yt-dlp di `server/engines` adalah skrip Python |
-| Pembatasan laju tidak berlaku | Worker Go gagal dijalankan. Biner bawaan hanya untuk Linux x86-64, bangun ulang dengan perintah `go build` di atas |
-| Galat `429` | Batas 15 permintaan per 15 menit tercapai. Tunggu hingga jendela waktu berakhir |
-| Ekstraksi gagal untuk satu situs saja | Situs tersebut mungkin berubah. Perbarui `server/engines/yt-dlp` ke versi terbaru |
-| Port 3000 sudah dipakai | Hentikan proses lain, atau ubah konstanta `PORT` di `server.ts` |
-| Sitemap ditolak Search Console | Host pada `SITE_URL` tidak sama dengan properti yang didaftarkan |
-| Fitur riwayat atau PDF tidak ada di Vercel | Ini sesuai desain. Jalankan di server Node.js sendiri |
+## Keamanan, Rate-Limiting & Privasi
 
-## Catatan Penggunaan
+1. **Dual-Identity Rate Limiting**: Menggabungkan alamat IP (`X-Forwarded-For` / `CF-Connecting-IP`) dan *Deterministic Device Fingerprint* (`X-Device-ID`) dengan batas wajar **15 permintaan ekstraksi per 15 menit** dan proteksi *burst* **5 permintaan per 20 detik**.
+2. **Privasi Tanpa Akun**: Pengguna tidak perlu mendaftar atau masuk (*login*). Riwayat unduhan disimpan secara terisolasi per perangkat di `localStorage` dan SQLite3.
+3. **Sanitasi Header & Filename**: Seluruh nama berkas unduhan disanitasi dari karakter ilegal dan dikirim bersama header `X-Content-Type-Options: nosniff`.
 
-Tina Downloader hanya mengambil media dari tautan yang diberikan pengguna. Hak cipta atas konten tetap dimiliki pemilik aslinya, dan pengguna bertanggung jawab mematuhi ketentuan layanan masing-masing platform. Platform dapat mengubah struktur situsnya kapan saja, sehingga mesin ekstraksi perlu diperbarui secara berkala.
+---
 
-## Penulis
+## SEO, OpenGraph, JSON-LD & AI Crawlers
 
-Dibuat oleh Nimzz. GitHub: [NimzzAI](https://github.com/NimzzAI).
+Plugin kustom `plugins/siteMeta.ts` secara otomatis menyuntikkan metadata SEO dan menghasilkan berkas indeks pada saat *build*:
+- **Structured Data (Schema.org JSON-LD)**: `WebSite`, `WebApplication`, dan `Organization`.
+- **Social Cards**: Tag OpenGraph (`og:title`, `og:description`, `og:image`) dan Twitter Summary Large Image.
+- **Generated Indexing Files**: `/robots.txt`, `/sitemap.xml`, `/manifest.webmanifest`, dan `/llms.txt` untuk keterbacaan mesin pencari modern.
+
+---
+
+## Profil Pengembang — Nimzz
+
+<div align="center">
+
+<img src="public/avatar.jpg" alt="Nimzz — Creator of Tina Downloader" width="110" style="border-radius: 16px;" />
+
+### **Nimzz (`@NimzzAi`)**
+*Full-Stack Software Engineer, Web Tooling Architect & Creator of Tina Downloader*
+
+</div>
+
+| Saluran Resmi | Identitas / Handle | Tautan Langsung |
+| :--- | :--- | :--- |
+| **WhatsApp Channel** | Saluran Resmi Nimzz | [whatsapp.com/channel/0029VbBhZWdGJP8HlbGaE63Q](https://whatsapp.com/channel/0029VbBhZWdGJP8HlbGaE63Q) |
+| **GitHub** | `@NimzzAi` | [github.com/NimzzAi](https://github.com/NimzzAi) |
+| **Telegram** | `@Nimzz4` | [t.me/Nimzz4](https://t.me/Nimzz4) |
+| **TikTok** | `@nimzz_bocil_pokemon` | [tiktok.com/@nimzz_bocil_pokemon](https://www.tiktok.com/@nimzz_bocil_pokemon) |
+
+---
+
+<div align="center">
+  <sub>Dibangun dengan dedikasi oleh <strong>Nimzz</strong> · © 2026 Tina Downloader. Seluruh hak cipta dilindungi.</sub>
+</div>

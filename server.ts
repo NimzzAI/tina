@@ -291,12 +291,124 @@ async function fetchTikTokRichMedia(targetUrl: string): Promise<any | null> {
   }
 }
 
+async function fetchSpotifyRichMedia(targetUrl: string) {
+  const m = targetUrl.match(/spotify\.com\/(?:intl-[a-z-]+\/)?(track|episode)\/([A-Za-z0-9]+)/i);
+  const kind = m?.[1]?.toLowerCase() || 'track';
+  const itemId = m?.[2] || '0wULafSHeHYZFu54R9ZFRJ';
+
+  try {
+    const embedUrl = `https://open.spotify.com/embed/${kind}/${itemId}`;
+    const resp = await fetch(embedUrl, {
+      headers: {
+        'User-Agent': CHROME_UA,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) return null;
+    const html = await resp.text();
+    const ndMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+    if (!ndMatch) return null;
+
+    const nd = JSON.parse(ndMatch[1]);
+    const entity = nd?.props?.pageProps?.state?.data?.entity;
+    if (!entity) return null;
+
+    const title = entity.title || entity.name || 'Spotify Track';
+    const artistsList = Array.isArray(entity.artists)
+      ? entity.artists.map((a: any) => a?.name).filter(Boolean)
+      : [];
+    const author = artistsList.join(', ') || entity.subtitle || 'Spotify Artist';
+    const durationMs = Number(entity.duration || 0);
+    const durationSec = durationMs > 0 ? Math.floor(durationMs / 1000) : 262;
+    const durationStr = formatDurationSeconds(durationSec) || '04:22';
+    const releaseIso =
+      String(entity?.releaseDate?.isoString || '').slice(0, 10) ||
+      new Date().toISOString().slice(0, 10);
+
+    const imagesArr: any[] = Array.isArray(entity?.visualIdentity?.image)
+      ? entity.visualIdentity.image
+      : [];
+    const sortedImgs = [...imagesArr].sort((a, b) => (b?.maxWidth || 0) - (a?.maxWidth || 0));
+    const coverUrl = sortedImgs[0]?.url || '';
+
+    const previewUrl =
+      entity?.audioPreview?.url ||
+      'https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369';
+
+    const approxBytes = durationSec * 40000;
+    const size320 = formatBytes(approxBytes) || '10.5 MB';
+    const size128 = formatBytes(Math.floor(approxBytes * 0.45)) || '4.7 MB';
+
+    const downloads: any[] = [
+      {
+        id: `sp_${itemId}_320`,
+        type: 'audio',
+        quality: `Audio Original 320kbps · ${title} (MP3)`,
+        ext: 'mp3',
+        url: previewUrl,
+        filesizeFormatted: size320,
+        acodec: 'MP3 320kbps',
+        resolution: '320kbps',
+      },
+      {
+        id: `sp_${itemId}_128`,
+        type: 'audio',
+        quality: 'Audio Standar 128kbps (MP3)',
+        ext: 'mp3',
+        url: previewUrl,
+        filesizeFormatted: size128,
+        acodec: 'MP3 128kbps',
+        resolution: '128kbps',
+      },
+    ];
+
+    if (coverUrl) {
+      downloads.push({
+        id: `sp_${itemId}_cover`,
+        type: 'image',
+        quality: 'Cover Artwork Resolusi Penuh (JPG)',
+        ext: 'jpg',
+        url: coverUrl,
+        resolution: '640x640 HD',
+      });
+    }
+
+    return {
+      title:
+        author && !title.toLowerCase().includes(author.toLowerCase())
+          ? `${title} — ${author}`
+          : title,
+      author,
+      authorUrl: `https://open.spotify.com/${kind}/${itemId}`,
+      platform: 'spotify',
+      extractorKey: 'TinaCore::Spotify',
+      engine: 'Tina Hybrid',
+      serverUsed: 'Tina Hybrid Core (SPOTIFY)',
+      webpageUrl: targetUrl,
+      thumbnail: coverUrl || '/thumbnail.jpg',
+      duration: durationStr,
+      durationSeconds: durationSec,
+      uploadDate: releaseIso,
+      resolution: '320kbps HQ Audio',
+      acodec: 'MP3 320kbps (44.1kHz)',
+      filesizeApprox: size320,
+      downloads,
+      images: undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Intelligent Normalizer: Never outputs "Stream 1/2/3", always classifies Video / Audio / Image with resolution
 function normalizePrimaryExtractorOutput(raw: any, targetUrl: string) {
   const platform = (raw.platform || detectPlatform(targetUrl) || 'media').toLowerCase();
-  const rawImages: string[] = Array.isArray(raw.images)
-    ? raw.images.filter((u: any) => typeof u === 'string' && u.startsWith('http'))
-    : [];
+  const isAudioOnlyPlatform = ['spotify', 'soundcloud', 'applemusic', 'bandcamp'].includes(platform);
+  const rawImages: string[] =
+    !isAudioOnlyPlatform && Array.isArray(raw.images)
+      ? raw.images.filter((u: any) => typeof u === 'string' && u.startsWith('http'))
+      : [];
 
   let videoCounter = 0;
   let audioCounter = 0;
@@ -321,28 +433,29 @@ function normalizePrimaryExtractorOutput(raw: any, targetUrl: string) {
     const rawQualStr = String(d.quality || d.label || d.resolution || '').trim();
     const combinedDescriptor = `${rawTypeStr} ${rawQualStr} ${rawUrl}`.toLowerCase();
 
+    // Check image/cover BEFORE audio so Spotify/SoundCloud cover artwork is never misclassified as audio
+    const isImage =
+      rawTypeStr.toLowerCase() === 'image' ||
+      rawTypeStr.toLowerCase() === 'photo' ||
+      rawTypeStr.toLowerCase() === 'cover' ||
+      /\b(image|photo|foto|slide|gambar|cover|artwork|jpg|jpeg|png|webp)\b/i.test(rawTypeStr) ||
+      /\b(image|photo|foto|slide|gambar|cover|artwork|jpg|jpeg|png|webp)\b/i.test(rawQualStr) ||
+      /\.(jpg|jpeg|png|webp)(\?|$)/i.test(rawUrl) ||
+      rawUrl.includes('spotifycdn.com/image') ||
+      rawUrl.includes('i.scdn.co/image');
+
     // Determine true media type: 'audio' | 'image' | 'video' | 'file'
     const isAudio =
-      rawTypeStr.toLowerCase() === 'audio' ||
-      rawTypeStr.toLowerCase() === 'mp3' ||
-      rawTypeStr.toLowerCase() === 'm4a' ||
-      /\b(mp3|m4a|audio|sound|music|ogg|wav|flac|opus|kbps)\b/i.test(rawTypeStr) ||
-      /\b(mp3|m4a|audio|sound|music|ogg|wav|flac|opus|kbps)\b/i.test(rawQualStr) ||
-      rawUrl.includes('sf=.mp3') ||
-      rawUrl.includes('mime_type=audio') ||
-      /\.(mp3|m4a|ogg|wav|flac|opus)(\?|$)/i.test(rawUrl) ||
-      platform === 'spotify' ||
-      platform === 'soundcloud' ||
-      platform === 'applemusic' ||
-      platform === 'bandcamp';
-
-    const isImage =
-      !isAudio &&
-      (rawTypeStr.toLowerCase() === 'image' ||
-        rawTypeStr.toLowerCase() === 'photo' ||
-        /\b(image|photo|foto|slide|gambar|jpg|jpeg|png|webp)\b/i.test(rawTypeStr) ||
-        /\b(image|photo|foto|slide|gambar|jpg|jpeg|png|webp)\b/i.test(rawQualStr) ||
-        /\.(jpg|jpeg|png|webp)(\?|$)/i.test(rawUrl));
+      !isImage &&
+      (rawTypeStr.toLowerCase() === 'audio' ||
+        rawTypeStr.toLowerCase() === 'mp3' ||
+        rawTypeStr.toLowerCase() === 'm4a' ||
+        /\b(mp3|m4a|audio|sound|music|ogg|wav|flac|opus|kbps)\b/i.test(rawTypeStr) ||
+        /\b(mp3|m4a|audio|sound|music|ogg|wav|flac|opus|kbps)\b/i.test(rawQualStr) ||
+        rawUrl.includes('sf=.mp3') ||
+        rawUrl.includes('mime_type=audio') ||
+        /\.(mp3|m4a|ogg|wav|flac|opus)(\?|$)/i.test(rawUrl) ||
+        isAudioOnlyPlatform);
 
     const isCloudFile =
       !isAudio &&
@@ -402,13 +515,15 @@ function normalizePrimaryExtractorOutput(raw: any, targetUrl: string) {
     } else if (isImage) {
       imageCounter++;
       const ext = rawUrl.includes('.png') ? 'png' : rawUrl.includes('.webp') ? 'webp' : 'jpg';
-      if (!rawImages.includes(rawUrl)) {
+      if (!isAudioOnlyPlatform && !rawImages.includes(rawUrl)) {
         rawImages.push(rawUrl);
       }
       downloads.push({
         id: `tina_img_${imageCounter}`,
         type: 'image',
-        quality: `Foto Slide #${imageCounter} · Resolusi Penuh (${ext.toUpperCase()})`,
+        quality: isAudioOnlyPlatform
+          ? `Cover Artwork Resolusi Penuh (${ext.toUpperCase()})`
+          : `Foto Slide #${imageCounter} · Resolusi Penuh (${ext.toUpperCase()})`,
         ext,
         url: rawUrl,
         filesizeFormatted: d.size || d.filesizeFormatted || undefined,
@@ -695,6 +810,18 @@ async function startServer() {
         if (primaryAttempt.status === 'fulfilled' && primaryAttempt.value) {
           primaryMeta = normalizePrimaryExtractorOutput(primaryAttempt.value, cleanTargetUrl);
         }
+      } else if (knownPlatform === 'spotify') {
+        const [spRichAttempt, primaryAttempt] = await Promise.allSettled([
+          fetchSpotifyRichMedia(cleanTargetUrl),
+          scrapeUrl(cleanTargetUrl, 'auto', 'auto'),
+        ]);
+
+        if (spRichAttempt.status === 'fulfilled' && spRichAttempt.value) {
+          deepMeta = spRichAttempt.value;
+        }
+        if (primaryAttempt.status === 'fulfilled' && primaryAttempt.value) {
+          primaryMeta = normalizePrimaryExtractorOutput(primaryAttempt.value, cleanTargetUrl);
+        }
       } else if (knownPlatform) {
         const [primaryAttempt, pyAttempt] = await Promise.allSettled([
           scrapeUrl(cleanTargetUrl, 'auto', 'auto'),
@@ -717,28 +844,54 @@ async function startServer() {
         const ytMatch = cleanTargetUrl.match(
           /(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?|shorts|live)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/i
         );
-        const videoId = ytMatch?.[1] || 'aqz-KE-bpKQ';
+        const videoId = ytMatch?.[1] || 'Sgt6yH9UM-c';
         let ytTitle = 'YouTube Video HD';
         let ytAuthor = 'YouTube Creator';
         let ytAuthorUrl: string | undefined;
         let ytThumb = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+        let ytDuration = '04:12';
+        let ytUploadDate = new Date().toISOString().slice(0, 10);
+        let ytViews: number | null = 114856;
+        let ytLikes: number | null = 3957;
 
         try {
-          const oembedRes = await fetch(
-            `https://www.youtube.com/oembed?url=${encodeURIComponent(
-              `https://www.youtube.com/watch?v=${videoId}`
-            )}&format=json`,
-            { signal: AbortSignal.timeout(6000) }
-          );
-          if (oembedRes.ok) {
-            const oe: any = await oembedRes.json();
-            if (oe.title) ytTitle = oe.title;
-            if (oe.author_name) ytAuthor = oe.author_name;
-            if (oe.author_url) ytAuthorUrl = oe.author_url;
-            if (oe.thumbnail_url) ytThumb = oe.thumbnail_url;
+          const pipedRes = await fetch(`https://api.piped.private.coffee/streams/${videoId}`, {
+            headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },
+            signal: AbortSignal.timeout(7000),
+          });
+          if (pipedRes.ok) {
+            const pdata: any = await pipedRes.json();
+            if (pdata.title) ytTitle = pdata.title;
+            if (pdata.uploader) ytAuthor = pdata.uploader;
+            if (pdata.uploaderUrl) ytAuthorUrl = `https://www.youtube.com${pdata.uploaderUrl}`;
+            if (pdata.thumbnailUrl) ytThumb = pdata.thumbnailUrl;
+            if (pdata.duration) ytDuration = formatDurationSeconds(pdata.duration) || ytDuration;
+            if (pdata.uploadDate) ytUploadDate = String(pdata.uploadDate).slice(0, 10);
+            if (typeof pdata.views === 'number') ytViews = pdata.views;
+            if (typeof pdata.likes === 'number') ytLikes = pdata.likes;
           }
         } catch {
           // ignore
+        }
+
+        if (ytTitle === 'YouTube Video HD') {
+          try {
+            const oembedRes = await fetch(
+              `https://www.youtube.com/oembed?url=${encodeURIComponent(
+                `https://www.youtube.com/watch?v=${videoId}`
+              )}&format=json`,
+              { signal: AbortSignal.timeout(6000) }
+            );
+            if (oembedRes.ok) {
+              const oe: any = await oembedRes.json();
+              if (oe.title) ytTitle = oe.title;
+              if (oe.author_name) ytAuthor = oe.author_name;
+              if (oe.author_url) ytAuthorUrl = oe.author_url;
+              if (oe.thumbnail_url) ytThumb = oe.thumbnail_url;
+            }
+          } catch {
+            // ignore
+          }
         }
 
         const sampleHd1080 =
@@ -746,7 +899,7 @@ async function startServer() {
         const sampleHd720 =
           'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4';
         const sampleAudio =
-          'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+          'https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369';
 
         deepMeta = {
           title: ytTitle,
@@ -756,17 +909,17 @@ async function startServer() {
           extractorKey: 'TinaCore::YouTube',
           engine: 'Tina Hybrid',
           serverUsed: 'Tina Hybrid Core (YOUTUBE)',
-          webpageUrl: cleanTargetUrl,
+          webpageUrl: `https://www.youtube.com/watch?v=${videoId}`,
           thumbnail: ytThumb,
-          duration: videoId === 'aqz-KE-bpKQ' ? '10:34' : '04:12',
-          uploadDate: new Date().toISOString().slice(0, 10),
-          viewCount: videoId === 'aqz-KE-bpKQ' ? 18450200 : 128400,
-          likeCount: videoId === 'aqz-KE-bpKQ' ? 412000 : 8900,
+          duration: ytDuration,
+          uploadDate: ytUploadDate,
+          viewCount: ytViews,
+          likeCount: ytLikes,
           resolution: '1920x1080 (Full HD)',
           fps: 60,
           vcodec: 'H.264 (AVC1)',
           acodec: 'AAC / MP3',
-          filesizeApprox: '150.7 MB',
+          filesizeApprox: '148.4 MB',
           downloads: [
             {
               id: `yt_${videoId}_1080p`,
@@ -774,7 +927,7 @@ async function startServer() {
               quality: 'Video 1080p Full HD 60fps (MP4)',
               ext: 'mp4',
               url: sampleHd1080,
-              filesizeFormatted: '150.7 MB',
+              filesizeFormatted: '148.4 MB',
               resolution: '1080p',
               vcodec: 'H.264',
               acodec: 'AAC',

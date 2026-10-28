@@ -49,6 +49,10 @@
       "destination": "/api/extract.py"
     },
     {
+      "source": "/api/resolve",
+      "destination": "/api/extract.py"
+    },
+    {
       "source": "/api/py/(.*)",
       "destination": "/api/extract.py"
     },

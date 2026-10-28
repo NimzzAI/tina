@@ -98,19 +98,19 @@ const QUICK_TEST_LINKS = [
     url: 'https://vm.tiktok.com/ZSgCBT3wv/',
   },
   {
+    label: 'Video Multi-Resolusi',
+    icon: 'fa-brands fa-youtube',
+    url: 'https://youtu.be/Sgt6yH9UM-c?si=dUP74ef5pdgEShXX',
+  },
+  {
+    label: 'Audio Track Spotify',
+    icon: 'fa-brands fa-spotify',
+    url: 'https://open.spotify.com/track/0wULafSHeHYZFu54R9ZFRJ',
+  },
+  {
     label: 'Galeri Foto Carousel',
     icon: 'fa-regular fa-images',
     url: 'https://www.pixiv.net/en/artworks/90000005',
-  },
-  {
-    label: 'Video Multi-Resolusi',
-    icon: 'fa-solid fa-film',
-    url: 'https://www.youtube.com/watch?v=aqz-KE-bpKQ',
-  },
-  {
-    label: 'Audio Track MP3',
-    icon: 'fa-solid fa-music',
-    url: 'https://soundcloud.com/forss/flickermood',
   },
 ];
 
@@ -154,6 +154,9 @@ const FAQ_ITEMS = [
 function buildProxyStreamUrl(rawUrl?: string): string {
   if (!rawUrl) return '';
   const lower = rawUrl.toLowerCase();
+  if (lower.includes('spotidown.app')) {
+    return `/api/proxy-stream?url=${encodeURIComponent(rawUrl)}&ext=mp3`;
+  }
   const needsRefererProxy =
     lower.includes('pximg.net') ||
     lower.includes('hdslb.com') ||
@@ -365,27 +368,36 @@ export default function App() {
     if (mediaResult?.images && mediaResult.images.length > 0) {
       return mediaResult.images;
     }
-    if (imageStreams.length > 0) {
+    const isAudioPlat = ['spotify', 'soundcloud', 'applemusic', 'bandcamp'].includes(
+      (mediaResult?.platform || '').toLowerCase()
+    );
+    if (!isAudioPlat && videoStreams.length === 0 && imageStreams.length > 0) {
       return imageStreams.map((s) => s.url);
     }
     return [];
-  }, [mediaResult, imageStreams]);
+  }, [mediaResult, imageStreams, videoStreams]);
 
   useEffect(() => {
     if (!mediaResult) return;
     const vids = (mediaResult.downloads || []).filter((s) => s.type === 'video');
     const auds = (mediaResult.downloads || []).filter((s) => s.type === 'audio');
+    const plat = (mediaResult.platform || '').toLowerCase();
+    const isAudioPlat = ['spotify', 'soundcloud', 'applemusic', 'bandcamp'].includes(plat);
     const imgs =
       mediaResult.images && mediaResult.images.length > 0
         ? mediaResult.images
-        : (mediaResult.downloads || []).filter((s) => s.type === 'image').map((s) => s.url);
+        : !isAudioPlat && vids.length === 0
+          ? (mediaResult.downloads || []).filter((s) => s.type === 'image').map((s) => s.url)
+          : [];
 
     setCarouselIndex(0);
     setLightboxOpen(false);
     setActiveVideoStream(vids[0] || null);
     setActiveAudioStream(auds[0] || null);
 
-    if (imgs.length > 0) {
+    if (isAudioPlat && auds.length > 0) {
+      setPreviewMode('audio');
+    } else if (imgs.length > 0) {
       setPreviewMode('carousel');
     } else if (vids.length > 0) {
       setPreviewMode('video');
@@ -1061,7 +1073,9 @@ export default function App() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs text-neutral-500 dark:text-neutral-400">Coba contoh:</span>
+                      <span className="text-xs font-mono text-neutral-500 dark:text-neutral-400">
+                        Coba contoh:
+                      </span>
                       {QUICK_TEST_LINKS.map((item) => (
                         <button
                           key={item.label}
@@ -1070,7 +1084,7 @@ export default function App() {
                             setUrlInput(item.url);
                             handleExtract(item.url);
                           }}
-                          className="h-8 px-3 rounded-full border border-neutral-300 dark:border-neutral-700 text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-accent-soft hover:border-accent transition-colors cursor-pointer"
+                          className="h-8 px-3 rounded-lg border border-neutral-300 dark:border-neutral-700 text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-accent-soft hover:border-accent transition-colors cursor-pointer"
                         >
                           <i className={`${item.icon} mr-1.5 opacity-70`} />
                           {item.label}
@@ -1307,6 +1321,7 @@ export default function App() {
                               videoStreams={videoStreams}
                               poster={mediaResult.thumbnail}
                               title={mediaResult.title}
+                              webpageUrl={mediaResult.webpageUrl}
                               onSelectStream={(s) => setActiveVideoStream(s)}
                               onDownload={(s) => handleDownloadStream(s)}
                               buildStreamUrl={buildProxyStreamUrl}
@@ -1442,6 +1457,7 @@ export default function App() {
                               title={mediaResult.title}
                               author={mediaResult.author}
                               thumbnail={mediaResult.thumbnail}
+                              webpageUrl={mediaResult.webpageUrl}
                               onDownload={(s) => handleDownloadStream(s)}
                               buildStreamUrl={buildProxyStreamUrl}
                             />
@@ -1464,18 +1480,17 @@ export default function App() {
                           )}
 
                           {/* Compact V10 Audio Deck below Video / Carousel */}
-                          {previewMode !== 'audio' &&
-                            activeAudioStream &&
-                            !activeAudioStream.needsResolve && (
-                              <V10AudioPlayer
-                                stream={activeAudioStream}
-                                title={mediaResult.title}
-                                author={mediaResult.author}
-                                compact
-                                onDownload={(s) => handleDownloadStream(s)}
-                                buildStreamUrl={buildProxyStreamUrl}
-                              />
-                            )}
+                          {previewMode !== 'audio' && activeAudioStream && (
+                            <V10AudioPlayer
+                              stream={activeAudioStream}
+                              title={mediaResult.title}
+                              author={mediaResult.author}
+                              webpageUrl={mediaResult.webpageUrl}
+                              compact
+                              onDownload={(s) => handleDownloadStream(s)}
+                              buildStreamUrl={buildProxyStreamUrl}
+                            />
+                          )}
                         </div>
 
                         {/* Right 5 Columns: User-Friendly Summary & Quick Download Buttons */}
@@ -1736,7 +1751,7 @@ export default function App() {
                                             </button>
                                           )}
 
-                                          {stream.type === 'audio' && !stream.needsResolve && (
+                                          {stream.type === 'audio' && (
                                             <button
                                               type="button"
                                               onClick={() => {
@@ -1750,7 +1765,7 @@ export default function App() {
                                               }`}
                                             >
                                               <i className="fa-solid fa-headphones mr-1 text-[10px]" />
-                                              Dengarkan
+                                              {isPlayingAudio ? 'Diputar' : 'Dengarkan'}
                                             </button>
                                           )}
 
