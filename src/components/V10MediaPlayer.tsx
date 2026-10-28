@@ -50,6 +50,7 @@ export function V10VideoPlayer({
   const [showHud, setShowHud] = useState<boolean>(true);
   const [resMenuOpen, setResMenuOpen] = useState<boolean>(false);
   const [pulseAction, setPulseAction] = useState<'play' | 'pause' | null>(null);
+  const [useDirectUrl, setUseDirectUrl] = useState<boolean>(false);
 
   const hideTimerRef = useRef<number | null>(null);
 
@@ -74,6 +75,7 @@ export function V10VideoPlayer({
 
   // Preserve playback time when switching resolutions
   useEffect(() => {
+    setUseDirectUrl(false);
     const vid = videoRef.current;
     if (!vid) return;
     setIsWaiting(true);
@@ -220,12 +222,25 @@ export function V10VideoPlayer({
       {/* Core HTML5 Video Element (Native controls disabled — V10 Custom HUD) */}
       <video
         ref={videoRef}
-        src={buildStreamUrl(activeStream.url)}
+        src={
+          useDirectUrl
+            ? buildStreamUrl(activeStream.url).startsWith('/api/proxy-stream')
+              ? activeStream.url
+              : `/api/proxy-stream?url=${encodeURIComponent(activeStream.url)}`
+            : buildStreamUrl(activeStream.url)
+        }
         poster={poster || undefined}
         playsInline
         preload="metadata"
+        referrerPolicy="no-referrer"
         onClick={togglePlay}
         onDoubleClick={toggleFullscreen}
+        onError={() => {
+          setIsWaiting(false);
+          if (!useDirectUrl && activeStream.url) {
+            setUseDirectUrl(true);
+          }
+        }}
         onPlay={() => {
           setIsPlaying(true);
           triggerHudVisibility();
@@ -562,8 +577,10 @@ export function V10AudioPlayer({
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
   const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [useDirectAudioUrl, setUseDirectAudioUrl] = useState<boolean>(false);
 
   useEffect(() => {
+    setUseDirectAudioUrl(false);
     setIsPlaying(false);
     setCurrentTime(0);
     setDuration(0);
@@ -604,8 +621,19 @@ export function V10AudioPlayer({
     >
       <audio
         ref={audioRef}
-        src={buildStreamUrl(stream.url)}
+        src={
+          useDirectAudioUrl
+            ? buildStreamUrl(stream.url).startsWith('/api/proxy-stream')
+              ? stream.url
+              : `/api/proxy-stream?url=${encodeURIComponent(stream.url)}`
+            : buildStreamUrl(stream.url)
+        }
         preload="metadata"
+        onError={() => {
+          if (!useDirectAudioUrl && stream.url) {
+            setUseDirectAudioUrl(true);
+          }
+        }}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}

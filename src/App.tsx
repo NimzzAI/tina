@@ -5,7 +5,7 @@ import { V10VideoPlayer, V10AudioPlayer } from './components/V10MediaPlayer';
 import { ApiDocsPage } from './components/ApiDocsPage';
 import { DeveloperPage } from './components/DeveloperPage';
 import {
-  FEATURED_SUPPORTED_SITES,
+  INITIAL_ALL_SUPPORTED_SITES,
   loadAllSupportedSitesClient,
   filterSupportedSites,
   safeFetchJson,
@@ -153,7 +153,17 @@ const FAQ_ITEMS = [
 
 function buildProxyStreamUrl(rawUrl?: string): string {
   if (!rawUrl) return '';
-  return `/api/proxy-stream?url=${encodeURIComponent(rawUrl)}`;
+  const lower = rawUrl.toLowerCase();
+  const needsRefererProxy =
+    lower.includes('pximg.net') ||
+    lower.includes('hdslb.com') ||
+    lower.includes('bilivideo.com') ||
+    lower.includes('xhscdn.com') ||
+    lower.includes('sinaimg.cn');
+  if (needsRefererProxy) {
+    return `/api/proxy-stream?url=${encodeURIComponent(rawUrl)}`;
+  }
+  return rawUrl;
 }
 
 export default function App() {
@@ -299,8 +309,10 @@ export default function App() {
     }
   });
   const [historySearch, setHistorySearch] = useState<string>('');
-  const [allSites, setAllSites] = useState<SupportedSiteItem[]>(FEATURED_SUPPORTED_SITES);
-  const [totalExtractors, setTotalExtractors] = useState<number>(1615);
+  const [allSites, setAllSites] = useState<SupportedSiteItem[]>(INITIAL_ALL_SUPPORTED_SITES);
+  const [totalExtractors, setTotalExtractors] = useState<number>(
+    INITIAL_ALL_SUPPORTED_SITES.length || 1615
+  );
   const [siteSearch, setSiteSearch] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Semua');
   const [loadingSites, setLoadingSites] = useState<boolean>(false);
@@ -474,9 +486,7 @@ export default function App() {
         newHistoryItem = (payload.historyItem as HistoryItem) || null;
       } else {
         // Try client-side fallback if backend returned non-JSON or failed
-        const fallbackResult = await extractMediaClientFallback(targetUrl);
-        extractedData = fallbackResult.data;
-        newHistoryItem = fallbackResult.historyItem;
+        extractedData = await extractMediaClientFallback(targetUrl);
       }
 
       if (!extractedData) {
@@ -595,55 +605,66 @@ export default function App() {
 
       setStatusNotice(`Mengunduh ${finalFileName}...`);
 
-      const resp = await fetch(downloadEndpoint, {
-        headers: { 'X-Device-ID': deviceId },
-      });
+      try {
+        const resp = await fetch(downloadEndpoint, {
+          headers: { 'X-Device-ID': deviceId },
+        });
 
-      if (!resp.ok) {
-        const errJson = await resp.json().catch(() => ({}));
-        throw new Error(errJson.error || 'Gagal mengunduh berkas media.');
-      }
-
-      const contentLength = Number(resp.headers.get('content-length') || 0);
-      if (resp.body && contentLength > 0 && contentLength < 150 * 1024 * 1024) {
-        const reader = resp.body.getReader();
-        const chunks: BlobPart[] = [];
-        let received = 0;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) {
-            chunks.push(value);
-            received += value.length;
-            const pct = Math.min(99, Math.round((received / contentLength) * 100));
-            setStatusNotice(`Mengunduh ${finalFileName} (${pct}%)...`);
-          }
+        const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+        if (!resp.ok || contentType.includes('application/json') || contentType.includes('text/html')) {
+          throw new Error('Fallback direct download');
         }
 
-        const blob = new Blob(chunks, { type: explicitMime });
-        const blobUrl = URL.createObjectURL(blob);
+        const contentLength = Number(resp.headers.get('content-length') || 0);
+        if (resp.body && contentLength > 0 && contentLength < 150 * 1024 * 1024) {
+          const reader = resp.body.getReader();
+          const chunks: BlobPart[] = [];
+          let received = 0;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              chunks.push(value);
+              received += value.length;
+              const pct = Math.min(99, Math.round((received / contentLength) * 100));
+              setStatusNotice(`Mengunduh ${finalFileName} (${pct}%)...`);
+            }
+          }
+
+          const blob = new Blob(chunks, { type: explicitMime });
+          const blobUrl = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = blobUrl;
+          link.download = finalFileName;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 20000);
+        } else {
+          const arrayBuf = await resp.arrayBuffer();
+          const blob = new Blob([arrayBuf], { type: explicitMime });
+          const blobUrl = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = blobUrl;
+          link.download = finalFileName;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 20000);
+        }
+      } catch {
+        // Fallback for serverless 4.5MB limit or CORS redirect: direct browser download
         const link = document.createElement('a');
-        link.href = blobUrl;
+        link.href = targetStreamUrl;
         link.download = finalFileName;
+        link.rel = 'noopener noreferrer';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 20000);
-      } else {
-        const arrayBuf = await resp.arrayBuffer();
-        const blob = new Blob([arrayBuf], { type: explicitMime });
-        const blobUrl = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.download = finalFileName;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 20000);
       }
 
-      setStatusNotice(`Berhasil mengunduh: ${finalFileName}`);
+      setStatusNotice(`Berhasil menyiapkan unduhan: ${finalFileName}`);
     } catch (err: any) {
       setErrorMessage(err?.message || 'Gagal memulai unduhan.');
     } finally {

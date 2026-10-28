@@ -60,7 +60,7 @@ const baseConfig = {
       description: 'Menyusun daftar gambar menjadi satu berkas PDF.',
     },
   ],
-  themeColor: { light: '#F3F6FC', dark: '#0C1020' },
+  themeColor: { light: '#F4F4F5', dark: '#09090B' },
   ogImage: {
     path: '/og-image.jpg',
     width: 1200,

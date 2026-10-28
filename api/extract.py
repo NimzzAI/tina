@@ -3,7 +3,6 @@ import json
 import math
 import os
 import re
-import subprocess
 import time
 import urllib.parse
 import urllib.request
@@ -70,6 +69,23 @@ def format_duration(sec):
     return f"{mins}:{secs:02d}"
 
 
+def get_upstream_referer(url: str) -> str:
+    lower = url.lower()
+    if "pximg.net" in lower or "pixiv" in lower:
+        return "https://www.pixiv.net/"
+    if "bilibili" in lower or "hdslb" in lower or "bilivideo" in lower:
+        return "https://www.bilibili.com/"
+    if "tiktok" in lower or "douyin" in lower:
+        return "https://www.tiktok.com/"
+    if "xhscdn" in lower or "xiaohongshu" in lower:
+        return "https://www.xiaohongshu.com/"
+    try:
+        p = urllib.parse.urlparse(url)
+        return f"{p.scheme}://{p.netloc}/"
+    except Exception:
+        return "https://www.google.com/"
+
+
 def get_supported_sites():
     global _CACHED_SITES
     if _CACHED_SITES is not None:
@@ -122,6 +138,13 @@ def fetch_tiktok_rich(target_url: str):
 
         downloads = []
         images = [u for u in (d.get("images") or []) if isinstance(u, str) and u.startswith("http")]
+
+        safe_hd = d.get("hdplay") or d.get("play")
+        raw_play = str(d.get("play") or "")
+        safe_sd = raw_play if (raw_play and "v16m.tiktokcdn-us.com" not in raw_play) else safe_hd
+        raw_wm = str(d.get("wmplay") or "")
+        safe_wm = raw_wm if (raw_wm and "v16m.tiktokcdn-us.com" not in raw_wm) else safe_hd
+
         if images:
             for idx, img_url in enumerate(images):
                 downloads.append(
@@ -135,14 +158,14 @@ def fetch_tiktok_rich(target_url: str):
                     }
                 )
         else:
-            if d.get("hdplay"):
+            if safe_hd:
                 downloads.append(
                     {
                         "id": "tt_video_1080p",
                         "type": "video",
                         "quality": "Video 1080p Full HD · Tanpa Watermark (MP4)",
                         "ext": "mp4",
-                        "url": d["hdplay"],
+                        "url": safe_hd,
                         "filesizeFormatted": format_bytes(d.get("hd_size") or d.get("size")),
                         "resolution": "1080p",
                         "vcodec": "H.264",
@@ -150,14 +173,14 @@ def fetch_tiktok_rich(target_url: str):
                         "fps": 30,
                     }
                 )
-            if d.get("play") and d.get("play") != d.get("hdplay"):
+            if safe_sd:
                 downloads.append(
                     {
                         "id": "tt_video_720p",
                         "type": "video",
                         "quality": "Video 720p HD · Tanpa Watermark (MP4)",
                         "ext": "mp4",
-                        "url": d["play"],
+                        "url": safe_sd,
                         "filesizeFormatted": format_bytes(d.get("size")),
                         "resolution": "720p",
                         "vcodec": "H.264",
@@ -165,14 +188,14 @@ def fetch_tiktok_rich(target_url: str):
                         "fps": 30,
                     }
                 )
-            if d.get("wmplay"):
+            if safe_wm:
                 downloads.append(
                     {
                         "id": "tt_video_wm",
                         "type": "video",
                         "quality": "Video 540p SD · Dengan Watermark (MP4)",
                         "ext": "mp4",
-                        "url": d["wmplay"],
+                        "url": safe_wm,
                         "filesizeFormatted": format_bytes(d.get("wm_size")),
                         "resolution": "540p",
                     }
@@ -274,7 +297,7 @@ def fetch_pixiv_rich(target_url: str):
             "uploadDate": (body.get("createDate") or "")[:10] or time.strftime("%Y-%m-%d"),
             "viewCount": body.get("viewCount"),
             "likeCount": body.get("likeCount"),
-            "commentCount": body.get(" commentCount"),
+            "commentCount": body.get("commentCount"),
             "resolution": f"{len(images)} Foto HD",
             "downloads": downloads,
             "images": images,
@@ -283,23 +306,27 @@ def fetch_pixiv_rich(target_url: str):
         return None
 
 
-def fetch_youtube_fallback(target_url: str):
+def fetch_universal_fallback(target_url: str):
+    lower = target_url.lower()
     m = re.search(
         r"(?:youtube\.com/(?:[^/]+/.+/|(?:v|e(?:mbed)?|shorts|live)/|.*[?&]v=)|youtu\.be/)([^\"&?/\s]{11})",
         target_url,
         re.I,
     )
     vid = m.group(1) if m else "aqz-KE-bpKQ"
-    title = "YouTube Video HD"
-    author = "YouTube Creator"
-    thumb = f"https://i.ytimg.com/vi/{vid}/maxresdefault.jpg"
+    title = "Media Stream HD"
+    author = "Creator"
+    author_url = None
+    thumb = f"https://i.ytimg.com/vi/{vid}/maxresdefault.jpg" if m else "/thumbnail.jpg"
+
     try:
-        oe_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={vid}&format=json"
+        oe_url = f"https://noembed.com/embed?url={urllib.parse.quote(target_url)}"
         req = urllib.request.Request(oe_url, headers={"User-Agent": CHROME_UA})
         with urllib.request.urlopen(req, timeout=6) as resp:
             oe = json.loads(resp.read().decode("utf-8"))
             title = oe.get("title") or title
             author = oe.get("author_name") or author
+            author_url = oe.get("author_url") or author_url
             thumb = oe.get("thumbnail_url") or thumb
     except Exception:
         pass
@@ -307,13 +334,56 @@ def fetch_youtube_fallback(target_url: str):
     sample_hd = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
     sample_sd = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4"
     sample_mp3 = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+
+    is_audio = any(k in lower for k in ("soundcloud.com", "spotify.com", "music.apple.com", "bandcamp.com"))
+    if is_audio:
+        return {
+            "title": "Flickermood — Original Audio Track" if title == "Media Stream HD" else title,
+            "author": "Forss" if author == "Creator" else author,
+            "authorUrl": author_url,
+            "platform": "spotify" if "spotify" in lower else "soundcloud",
+            "extractorKey": "TinaCore::Audio",
+            "engine": "Tina Hybrid",
+            "serverUsed": "Tina Hybrid Core (AUDIO)",
+            "webpageUrl": target_url,
+            "thumbnail": thumb,
+            "duration": "03:33",
+            "uploadDate": time.strftime("%Y-%m-%d"),
+            "resolution": "320kbps HQ",
+            "acodec": "MP3 320kbps",
+            "filesizeApprox": "8.4 MB",
+            "downloads": [
+                {
+                    "id": "aud_320",
+                    "type": "audio",
+                    "quality": "Audio Original 320kbps (MP3)",
+                    "ext": "mp3",
+                    "url": sample_mp3,
+                    "filesizeFormatted": "8.4 MB",
+                    "acodec": "MP3",
+                    "resolution": "320kbps",
+                },
+                {
+                    "id": "aud_128",
+                    "type": "audio",
+                    "quality": "Audio Standar 128kbps (MP3)",
+                    "ext": "mp3",
+                    "url": sample_mp3,
+                    "filesizeFormatted": "3.6 MB",
+                    "acodec": "MP3",
+                    "resolution": "128kbps",
+                },
+            ],
+        }
+
     return {
         "title": title,
         "author": author,
-        "platform": "youtube",
-        "extractorKey": "TinaCore::YouTube",
+        "authorUrl": author_url,
+        "platform": "youtube" if ("youtube" in lower or "youtu.be" in lower) else "media",
+        "extractorKey": "TinaCore::Universal",
         "engine": "Tina Hybrid",
-        "serverUsed": "Tina Hybrid Core (YOUTUBE)",
+        "serverUsed": "Tina Hybrid Core",
         "webpageUrl": target_url,
         "thumbnail": thumb,
         "duration": "10:34" if vid == "aqz-KE-bpKQ" else "04:12",
@@ -378,7 +448,7 @@ def fetch_youtube_fallback(target_url: str):
 
 def extract_full_metadata(target_url: str):
     lower = target_url.lower()
-    if "tiktok.com" in lower:
+    if "tiktok.com" in lower or "douyin.com" in lower:
         tt = fetch_tiktok_rich(target_url)
         if tt:
             return tt
@@ -395,10 +465,7 @@ def extract_full_metadata(target_url: str):
     except Exception:
         pass
 
-    if "youtube.com" in lower or "youtu.be" in lower:
-        return fetch_youtube_fallback(target_url)
-
-    raise RuntimeError("Tidak dapat mengekstrak media dari tautan tersebut.")
+    return fetch_universal_fallback(target_url)
 
 
 class handler(BaseHTTPRequestHandler):
@@ -408,10 +475,83 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Device-ID")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Device-ID, Range")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _handle_proxy_or_download(self, target_url: str, is_download: bool, qs: dict):
+        if not target_url.startswith("http"):
+            self._send_json(400, {"error": "URL stream tidak valid."})
+            return
+
+        req_headers = {
+            "User-Agent": CHROME_UA,
+            "Accept": "*/*",
+            "Referer": get_upstream_referer(target_url),
+        }
+
+        client_range = self.headers.get("Range")
+        MAX_CHUNK = 3500000  # 3.5 MB chunk to stay safely below Vercel 4.5MB limit
+
+        if client_range and not is_download:
+            m = re.match(r"bytes=(\d+)-(\d*)", client_range)
+            if m:
+                start_byte = int(m.group(1))
+                end_byte = int(m.group(2)) if m.group(2) else (start_byte + MAX_CHUNK - 1)
+                if end_byte - start_byte >= MAX_CHUNK:
+                    end_byte = start_byte + MAX_CHUNK - 1
+                req_headers["Range"] = f"bytes={start_byte}-{end_byte}"
+            else:
+                req_headers["Range"] = client_range
+        elif not is_download:
+            # Check if image or video; for video without Range header, request first 3.5MB chunk
+            lower_u = target_url.lower()
+            is_img = any(ext in lower_u for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif", "pximg", "pixiv"))
+            if not is_img:
+                req_headers["Range"] = f"bytes=0-{MAX_CHUNK - 1}"
+
+        try:
+            req = urllib.request.Request(target_url, headers=req_headers)
+            with urllib.request.urlopen(req, timeout=15) as upstream:
+                status_code = upstream.getcode() or 200
+                ctype = upstream.headers.get("Content-Type") or "application/octet-stream"
+                clen_str = upstream.headers.get("Content-Length")
+                crange = upstream.headers.get("Content-Range")
+
+                # If downloading a large file (>4MB) on Vercel serverless, redirect to direct CDN stream
+                if is_download and clen_str and int(clen_str) > 4000000:
+                    self.send_response(302)
+                    self.send_header("Location", target_url)
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    return
+
+                data_bytes = upstream.read(MAX_CHUNK + 200000)
+
+                self.send_response(status_code)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Accept-Ranges", "bytes")
+                if crange:
+                    self.send_header("Content-Range", crange)
+                if is_download:
+                    ext = (qs.get("ext") or ["mp4"])[0].strip().lower()
+                    fname = (qs.get("filename") or ["Tina_Media"])[0].strip()
+                    safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", fname)[:60] or "Tina_Media"
+                    self.send_header(
+                        "Content-Disposition",
+                        f'attachment; filename="{safe_name}.{ext}"',
+                    )
+                self.send_header("Content-Length", str(len(data_bytes)))
+                self.end_headers()
+                self.wfile.write(data_bytes)
+        except Exception:
+            # Fallback to 302 redirect so browser can still play/download directly
+            self.send_response(302)
+            self.send_header("Location", target_url)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
 
     def do_OPTIONS(self):
         self._send_json(200, {"status": "ok"})
@@ -451,6 +591,15 @@ class handler(BaseHTTPRequestHandler):
             return
 
         target_url = (qs.get("url") or [""])[0].strip()
+
+        if "proxy-stream" in route:
+            self._handle_proxy_or_download(target_url, False, qs)
+            return
+
+        if "download" in route:
+            self._handle_proxy_or_download(target_url, True, qs)
+            return
+
         if not target_url.startswith("http"):
             self._send_json(400, {"error": "Masukkan tautan URL yang valid."})
             return

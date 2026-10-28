@@ -1,4 +1,5 @@
 import { MediaMetadata, SupportedSiteItem, DownloadStream } from '../types';
+import supportedSitesMarkdownRaw from '../../public/assets/markdown/supportedsites_cb2590be.md?raw';
 
 export const FEATURED_SUPPORTED_SITES: SupportedSiteItem[] = [
   { name: 'TikTok', description: 'Video 1080p/720p Tanpa Watermark, Audio MP3, & Galeri Foto Slideshow', category: 'Sosial & Video' },
@@ -29,7 +30,42 @@ export const FEATURED_SUPPORTED_SITES: SupportedSiteItem[] = [
   { name: 'Linkvertise / LootLabs / Sub2Unlock', description: 'Bypass & Resolver Tautan Shortlink', category: 'Cloud & Berkas' },
 ];
 
-let cachedAllSites: SupportedSiteItem[] | null = null;
+export function parseSupportedSitesMarkdown(markdownContent: string): SupportedSiteItem[] {
+  const seenNames = new Set(FEATURED_SUPPORTED_SITES.map((s) => s.name.toLowerCase()));
+  const globalExtractors: SupportedSiteItem[] = [];
+  const lines = (markdownContent || '').split('\n');
+
+  for (const line of lines) {
+    const match = line.match(/^\s*-\s*\*\*([^*]+)\*\*(?::\s*(.*))?$/);
+    if (match) {
+      const name = match[1].trim();
+      if (seenNames.has(name.toLowerCase())) continue;
+      seenNames.add(name.toLowerCase());
+
+      const rawDesc = (match[2] || '')
+        .replace(/\[\*.*?\*\]\(.*?\)/g, '')
+        .replace(/yt-dlp/gi, 'Tina Downloader')
+        .trim();
+
+      if (rawDesc.toLowerCase().includes('currently broken')) continue;
+
+      globalExtractors.push({
+        name,
+        description: rawDesc || `Ekstraktor media resmi Tina Downloader untuk ${name}`,
+        category: 'Ekstraktor Global',
+      });
+    }
+  }
+
+  return [...FEATURED_SUPPORTED_SITES, ...globalExtractors];
+}
+
+// Pre-parsed 1,615+ supported sites bundled at build time so it is never stuck at 26 sites
+export const INITIAL_ALL_SUPPORTED_SITES: SupportedSiteItem[] =
+  parseSupportedSitesMarkdown(supportedSitesMarkdownRaw);
+
+let cachedAllSites: SupportedSiteItem[] | null =
+  INITIAL_ALL_SUPPORTED_SITES.length > 100 ? INITIAL_ALL_SUPPORTED_SITES : null;
 
 function formatBytesClient(bytes?: number | null): string | undefined {
   if (!bytes || bytes <= 0 || !Number.isFinite(bytes)) return undefined;
@@ -108,58 +144,34 @@ export async function safeFetchJson(
   }
 }
 
-export function parseSupportedSitesMarkdown(markdownContent: string): SupportedSiteItem[] {
-  const seenNames = new Set(FEATURED_SUPPORTED_SITES.map((s) => s.name.toLowerCase()));
-  const globalExtractors: SupportedSiteItem[] = [];
-  const lines = markdownContent.split('\n');
-
-  for (const line of lines) {
-    const match = line.match(/^\s*-\s*\*\*([^*]+)\*\*(?::\s*(.*))?$/);
-    if (match) {
-      const name = match[1].trim();
-      if (seenNames.has(name.toLowerCase())) continue;
-      seenNames.add(name.toLowerCase());
-
-      const rawDesc = (match[2] || '')
-        .replace(/\[\*.*?\*\]\(.*?\)/g, '')
-        .replace(/yt-dlp/gi, 'Tina Downloader')
-        .trim();
-
-      if (rawDesc.toLowerCase().includes('currently broken')) continue;
-
-      globalExtractors.push({
-        name,
-        description: rawDesc || `Ekstraktor media resmi Tina Downloader untuk ${name}`,
-        category: 'Ekstraktor Global',
-      });
-    }
-  }
-
-  return [...FEATURED_SUPPORTED_SITES, ...globalExtractors];
-}
-
-export async function loadAllSupportedSitesClient(): Promise<SupportedSiteItem[]> {
+export async function loadAllSupportedSitesClient(): Promise<{
+  items: SupportedSiteItem[];
+  total: number;
+}> {
   if (cachedAllSites && cachedAllSites.length > 100) {
-    return cachedAllSites;
+    return { items: cachedAllSites, total: cachedAllSites.length };
   }
 
-  // 1. Try backend /api/supported-sites first
+  // 1. Try backend /api/supported-sites
   const apiRes = await safeFetchJson('/api/supported-sites?category=all');
   if (apiRes.ok && Array.isArray(apiRes.data?.items) && apiRes.data.items.length > 100) {
     cachedAllSites = apiRes.data.items;
-    return cachedAllSites!;
+    return {
+      items: cachedAllSites!,
+      total: apiRes.data.total || cachedAllSites!.length,
+    };
   }
 
-  // 2. Fallback: parse static markdown directly from /assets/markdown/supportedsites_cb2590be.md
+  // 2. Fallback: fetch static markdown from public assets
   try {
     const mdRes = await fetch('/assets/markdown/supportedsites_cb2590be.md');
     if (mdRes.ok) {
       const mdText = await mdRes.text();
       if (mdText && !mdText.trim().startsWith('<!doctype') && !mdText.trim().startsWith('<html')) {
         const parsed = parseSupportedSitesMarkdown(mdText);
-        if (parsed.length > 26) {
+        if (parsed.length > 100) {
           cachedAllSites = parsed;
-          return parsed;
+          return { items: parsed, total: parsed.length };
         }
       }
     }
@@ -167,13 +179,12 @@ export async function loadAllSupportedSitesClient(): Promise<SupportedSiteItem[]
     // ignore
   }
 
-  if (apiRes.ok && Array.isArray(apiRes.data?.items) && apiRes.data.items.length > 0) {
-    cachedAllSites = apiRes.data.items;
-    return cachedAllSites!;
-  }
-
-  cachedAllSites = FEATURED_SUPPORTED_SITES;
-  return FEATURED_SUPPORTED_SITES;
+  const fallbackList =
+    INITIAL_ALL_SUPPORTED_SITES.length > 26
+      ? INITIAL_ALL_SUPPORTED_SITES
+      : FEATURED_SUPPORTED_SITES;
+  cachedAllSites = fallbackList;
+  return { items: fallbackList, total: fallbackList.length };
 }
 
 export function filterSupportedSites(
@@ -219,6 +230,12 @@ export async function extractMediaClientFallback(targetUrl: string): Promise<Med
         ? d.images.filter((u: any) => typeof u === 'string' && u.startsWith('http'))
         : [];
 
+      const safeHdPlay = d.hdplay || d.play;
+      const safeSdPlay =
+        d.play && !String(d.play).includes('v16m.tiktokcdn-us.com') ? d.play : safeHdPlay;
+      const safeWmPlay =
+        d.wmplay && !String(d.wmplay).includes('v16m.tiktokcdn-us.com') ? d.wmplay : safeHdPlay;
+
       if (images.length > 0) {
         images.forEach((imgUrl, idx) => {
           downloads.push({
@@ -231,13 +248,13 @@ export async function extractMediaClientFallback(targetUrl: string): Promise<Med
           });
         });
       } else {
-        if (d.hdplay) {
+        if (safeHdPlay) {
           downloads.push({
             id: 'tt_video_1080p',
             type: 'video',
             quality: 'Video 1080p Full HD · Tanpa Watermark (MP4)',
             ext: 'mp4',
-            url: d.hdplay,
+            url: safeHdPlay,
             filesizeFormatted: formatBytesClient(d.hd_size || d.size),
             resolution: '1080p',
             vcodec: 'H.264',
@@ -245,13 +262,13 @@ export async function extractMediaClientFallback(targetUrl: string): Promise<Med
             fps: 30,
           });
         }
-        if (d.play && d.play !== d.hdplay) {
+        if (safeSdPlay) {
           downloads.push({
             id: 'tt_video_720p',
             type: 'video',
             quality: 'Video 720p HD · Tanpa Watermark (MP4)',
             ext: 'mp4',
-            url: d.play,
+            url: safeSdPlay,
             filesizeFormatted: formatBytesClient(d.size),
             resolution: '720p',
             vcodec: 'H.264',
@@ -259,13 +276,13 @@ export async function extractMediaClientFallback(targetUrl: string): Promise<Med
             fps: 30,
           });
         }
-        if (d.wmplay) {
+        if (safeWmPlay) {
           downloads.push({
             id: 'tt_video_wm',
             type: 'video',
             quality: 'Video 540p SD · Dengan Watermark (MP4)',
             ext: 'mp4',
-            url: d.wmplay,
+            url: safeWmPlay,
             filesizeFormatted: formatBytesClient(d.wm_size),
             resolution: '540p',
           });

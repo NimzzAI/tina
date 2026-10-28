@@ -180,6 +180,16 @@ async function fetchTikTokRichMedia(targetUrl: string): Promise<any | null> {
       ? d.images.filter((u: any) => typeof u === 'string' && u.startsWith('http'))
       : [];
 
+    const safeHdPlay = d.hdplay || d.play;
+    const safeSdPlay =
+      d.play && typeof d.play === 'string' && !d.play.includes('v16m.tiktokcdn-us.com')
+        ? d.play
+        : safeHdPlay;
+    const safeWmPlay =
+      d.wmplay && typeof d.wmplay === 'string' && !d.wmplay.includes('v16m.tiktokcdn-us.com')
+        ? d.wmplay
+        : safeHdPlay;
+
     if (images.length > 0) {
       images.forEach((imgUrl, idx) => {
         downloads.push({
@@ -192,13 +202,13 @@ async function fetchTikTokRichMedia(targetUrl: string): Promise<any | null> {
         });
       });
     } else {
-      if (d.hdplay && typeof d.hdplay === 'string') {
+      if (safeHdPlay && typeof safeHdPlay === 'string') {
         downloads.push({
           id: 'tt_video_1080p',
           type: 'video',
           quality: 'Video 1080p Full HD · Tanpa Watermark (MP4)',
           ext: 'mp4',
-          url: d.hdplay,
+          url: safeHdPlay,
           filesize: d.hd_size || d.size || null,
           filesizeFormatted: formatBytes(d.hd_size || d.size),
           resolution: '1080p',
@@ -207,27 +217,13 @@ async function fetchTikTokRichMedia(targetUrl: string): Promise<any | null> {
           fps: 30,
         });
       }
-      if (d.play && typeof d.play === 'string' && d.play !== d.hdplay) {
+      if (safeSdPlay && typeof safeSdPlay === 'string') {
         downloads.push({
           id: 'tt_video_720p',
           type: 'video',
           quality: 'Video 720p HD · Tanpa Watermark (MP4)',
           ext: 'mp4',
-          url: d.play,
-          filesize: d.size || null,
-          filesizeFormatted: formatBytes(d.size),
-          resolution: '720p',
-          vcodec: 'H.264',
-          acodec: 'AAC',
-          fps: 30,
-        });
-      } else if (d.play && typeof d.play === 'string' && downloads.length === 0) {
-        downloads.push({
-          id: 'tt_video_hd',
-          type: 'video',
-          quality: 'Video HD · Tanpa Watermark (MP4)',
-          ext: 'mp4',
-          url: d.play,
+          url: safeSdPlay,
           filesize: d.size || null,
           filesizeFormatted: formatBytes(d.size),
           resolution: '720p',
@@ -236,13 +232,13 @@ async function fetchTikTokRichMedia(targetUrl: string): Promise<any | null> {
           fps: 30,
         });
       }
-      if (d.wmplay && typeof d.wmplay === 'string') {
+      if (safeWmPlay && typeof safeWmPlay === 'string') {
         downloads.push({
           id: 'tt_video_wm',
           type: 'video',
           quality: 'Video 540p SD · Dengan Watermark (MP4)',
           ext: 'mp4',
-          url: d.wmplay,
+          url: safeWmPlay,
           filesize: d.wm_size || null,
           filesizeFormatted: formatBytes(d.wm_size),
           resolution: '540p',

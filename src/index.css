@@ -7,17 +7,17 @@
   --font-display: 'Unbounded', 'Onest', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
-  --color-neutral-50: #F5F7FC;
-  --color-neutral-100: #EBEFF8;
-  --color-neutral-200: #DCE2F1;
-  --color-neutral-300: #C4CDE2;
-  --color-neutral-400: #7A86A5;
-  --color-neutral-500: #5E6A89;
-  --color-neutral-600: #48526F;
-  --color-neutral-700: #343D58;
-  --color-neutral-800: #242B43;
-  --color-neutral-900: #181D32;
-  --color-neutral-950: #0F1327;
+  --color-neutral-50: #FAFAFA;
+  --color-neutral-100: #F4F4F5;
+  --color-neutral-200: #E4E4E7;
+  --color-neutral-300: #D4D4D8;
+  --color-neutral-400: #A1A1AA;
+  --color-neutral-500: #71717A;
+  --color-neutral-600: #52525B;
+  --color-neutral-700: #3F3F46;
+  --color-neutral-800: #27272A;
+  --color-neutral-900: #18181B;
+  --color-neutral-950: #09090B;
 
   --radius-md: 0.375rem;
   --radius-lg: 0.625rem;
@@ -35,23 +35,23 @@
 }
 
 :root {
-  --paper: #F3F6FC;
+  --paper: #F4F4F5;
   --surface: #FFFFFF;
-  --ink: #0F1327;
-  --accent: #3B63D8;
-  --accent-hover: #2F52BF;
+  --ink: #09090B;
+  --accent: #09090B;
+  --accent-hover: #27272A;
   --accent-fg: #FFFFFF;
-  --accent-soft: #E3EAFD;
+  --accent-soft: #E4E4E7;
 }
 
 html.dark {
-  --paper: #0C1020;
-  --surface: #151A2C;
-  --ink: #EEF1FA;
-  --accent: #86A8FF;
-  --accent-hover: #A3BDFF;
-  --accent-fg: #0C1020;
-  --accent-soft: #1D2646;
+  --paper: #09090B;
+  --surface: #121214;
+  --ink: #FAFAFA;
+  --accent: #FAFAFA;
+  --accent-hover: #E4E4E7;
+  --accent-fg: #09090B;
+  --accent-soft: #27272A;
 }
 
 @layer base {
@@ -202,13 +202,13 @@ html.dark {
 }
 
 .skeleton-shimmer {
-  background: linear-gradient(90deg, #DCE2F1 25%, #EBEFF8 50%, #DCE2F1 75%);
+  background: linear-gradient(90deg, #E4E4E7 25%, #F4F4F5 50%, #E4E4E7 75%);
   background-size: 200% 100%;
   animation: tinaShimmer 1.5s infinite linear;
 }
 
 html.dark .skeleton-shimmer {
-  background: linear-gradient(90deg, #151A2C 25%, #242B43 50%, #151A2C 75%);
+  background: linear-gradient(90deg, #18181B 25%, #27272A 50%, #18181B 75%);
   background-size: 200% 100%;
   animation: tinaShimmer 1.5s infinite linear;
 }
