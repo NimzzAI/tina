@@ -1,0 +1,6 @@
+{
+  "name": "Tina Downloader",
+  "description": "Platform pengunduh media dan ekstraktor metadata serbaguna dengan sistem keamanan IP & Device ID. Dikembangkan oleh Nimzz.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,34 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    },
+    {
+      "src": "api/*.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "api/*.go",
+      "use": "@vercel/go"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/py/(.*)",
+      "destination": "/api/extract.py"
+    },
+    {
+      "source": "/api/go/(.*)",
+      "destination": "/api/security.go"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

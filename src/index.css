@@ -1,0 +1,234 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: 'Onest', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: 'Unbounded', 'Onest', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --color-neutral-50: #F5F7FC;
+  --color-neutral-100: #EBEFF8;
+  --color-neutral-200: #DCE2F1;
+  --color-neutral-300: #C4CDE2;
+  --color-neutral-400: #7A86A5;
+  --color-neutral-500: #5E6A89;
+  --color-neutral-600: #48526F;
+  --color-neutral-700: #343D58;
+  --color-neutral-800: #242B43;
+  --color-neutral-900: #181D32;
+  --color-neutral-950: #0F1327;
+
+  --radius-md: 0.375rem;
+  --radius-lg: 0.625rem;
+  --radius-xl: 1rem;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+}
+
+:root {
+  --paper: #F3F6FC;
+  --surface: #FFFFFF;
+  --ink: #0F1327;
+  --accent: #3B63D8;
+  --accent-hover: #2F52BF;
+  --accent-fg: #FFFFFF;
+  --accent-soft: #E3EAFD;
+}
+
+html.dark {
+  --paper: #0C1020;
+  --surface: #151A2C;
+  --ink: #EEF1FA;
+  --accent: #86A8FF;
+  --accent-hover: #A3BDFF;
+  --accent-fg: #0C1020;
+  --accent-soft: #1D2646;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--paper);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+
+  h2,
+  h3,
+  h4 {
+    letter-spacing: -0.01em;
+  }
+
+  code,
+  pre,
+  .font-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.viewfinder {
+  position: relative;
+  padding: 12px;
+}
+
+.viewfinder-frame {
+  position: relative;
+  overflow: hidden;
+}
+
+.vf-corner {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border: 0 solid var(--accent);
+  transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+  pointer-events: none;
+}
+
+.vf-tl {
+  top: 0;
+  left: 0;
+  border-top-width: 3px;
+  border-left-width: 3px;
+  border-top-left-radius: 8px;
+}
+
+.vf-tr {
+  top: 0;
+  right: 0;
+  border-top-width: 3px;
+  border-right-width: 3px;
+  border-top-right-radius: 8px;
+}
+
+.vf-bl {
+  bottom: 0;
+  left: 0;
+  border-bottom-width: 3px;
+  border-left-width: 3px;
+  border-bottom-left-radius: 8px;
+}
+
+.vf-br {
+  bottom: 0;
+  right: 0;
+  border-bottom-width: 3px;
+  border-right-width: 3px;
+  border-bottom-right-radius: 8px;
+}
+
+.viewfinder.is-scanning .vf-tl {
+  transform: translate(6px, 6px);
+}
+
+.viewfinder.is-scanning .vf-tr {
+  transform: translate(-6px, 6px);
+}
+
+.viewfinder.is-scanning .vf-bl {
+  transform: translate(6px, -6px);
+}
+
+.viewfinder.is-scanning .vf-br {
+  transform: translate(-6px, -6px);
+}
+
+.vf-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent) 20%, var(--accent) 80%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.viewfinder.is-scanning .vf-scan {
+  opacity: 1;
+  animation: vfScan 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes vfScan {
+  from {
+    top: 0;
+  }
+  to {
+    top: calc(100% - 2px);
+  }
+}
+
+@keyframes tinaShimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(90deg, #DCE2F1 25%, #EBEFF8 50%, #DCE2F1 75%);
+  background-size: 200% 100%;
+  animation: tinaShimmer 1.5s infinite linear;
+}
+
+html.dark .skeleton-shimmer {
+  background: linear-gradient(90deg, #151A2C 25%, #242B43 50%, #151A2C 75%);
+  background-size: 200% 100%;
+  animation: tinaShimmer 1.5s infinite linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .vf-corner {
+    transition: none;
+  }
+
+  .viewfinder.is-scanning .vf-scan {
+    animation: none;
+    top: 50%;
+  }
+
+  .skeleton-shimmer,
+  html.dark .skeleton-shimmer {
+    animation: none;
+  }
+}
