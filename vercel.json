@@ -19,6 +19,30 @@
   ],
   "rewrites": [
     {
+      "source": "/api/extract",
+      "destination": "/api/extract.py"
+    },
+    {
+      "source": "/api/supported-sites",
+      "destination": "/api/extract.py"
+    },
+    {
+      "source": "/api/history",
+      "destination": "/api/extract.py"
+    },
+    {
+      "source": "/api/history/(.*)",
+      "destination": "/api/extract.py"
+    },
+    {
+      "source": "/api/proxy-stream",
+      "destination": "/api/extract.py"
+    },
+    {
+      "source": "/api/download/(.*)",
+      "destination": "/api/extract.py"
+    },
+    {
       "source": "/api/py/(.*)",
       "destination": "/api/extract.py"
     },

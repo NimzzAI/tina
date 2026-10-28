@@ -3,6 +3,14 @@ import { motion, AnimatePresence } from 'motion/react';
 import { getDeviceId } from './utils/deviceFingerprint';
 import { V10VideoPlayer, V10AudioPlayer } from './components/V10MediaPlayer';
 import { ApiDocsPage } from './components/ApiDocsPage';
+import { DeveloperPage } from './components/DeveloperPage';
+import {
+  FEATURED_SUPPORTED_SITES,
+  loadAllSupportedSitesClient,
+  filterSupportedSites,
+  safeFetchJson,
+  extractMediaClientFallback,
+} from './utils/clientFallback';
 import {
   MediaMetadata,
   DownloadStream,
@@ -13,6 +21,44 @@ import {
 type ActiveTab = 'downloader' | 'history' | 'sites' | 'api-docs' | 'about' | 'developer';
 type ResultSubTab = 'streams' | 'info';
 type PreviewMode = 'video' | 'carousel' | 'audio' | 'cover';
+
+const VALID_TABS: ActiveTab[] = [
+  'downloader',
+  'history',
+  'sites',
+  'api-docs',
+  'about',
+  'developer',
+];
+
+function resolveInitialActiveTab(): ActiveTab {
+  if (typeof window === 'undefined') return 'downloader';
+  try {
+    const pathSeg = window.location.pathname.replace(/^\/+|\/+$/g, '').toLowerCase();
+    if (VALID_TABS.includes(pathSeg as ActiveTab)) {
+      return pathSeg as ActiveTab;
+    }
+
+    const hashSeg = window.location.hash.replace(/^#\/?/, '').toLowerCase();
+    if (VALID_TABS.includes(hashSeg as ActiveTab)) {
+      return hashSeg as ActiveTab;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const queryTab = (params.get('tab') || '').toLowerCase();
+    if (VALID_TABS.includes(queryTab as ActiveTab)) {
+      return queryTab as ActiveTab;
+    }
+
+    const savedTab = localStorage.getItem('tina_active_tab');
+    if (savedTab && VALID_TABS.includes(savedTab as ActiveTab)) {
+      return savedTab as ActiveTab;
+    }
+  } catch {
+    // ignore storage/location errors
+  }
+  return 'downloader';
+}
 
 const NIMZZ_SOCIAL_ACCOUNTS = [
   {
@@ -136,24 +182,105 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // Navigation & Three-Dots Menu state
-  const [activeTab, setActiveTab] = useState<ActiveTab>('downloader');
+  // Navigation & Three-Dots Menu state (persisted across refresh & URL history)
+  const [activeTab, setActiveTabState] = useState<ActiveTab>(() => resolveInitialActiveTab());
   const [menuOpen, setMenuOpen] = useState<boolean>(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+
+  const setActiveTab = useCallback((nextTab: ActiveTab) => {
+    setActiveTabState(nextTab);
+    try {
+      localStorage.setItem('tina_active_tab', nextTab);
+      const targetPath = nextTab === 'downloader' ? '/' : `/${nextTab}`;
+      if (window.location.pathname !== targetPath) {
+        window.history.pushState({ tab: nextTab }, '', targetPath);
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Keep URL & localStorage synced on initial load and browser Back/Forward
+  useEffect(() => {
+    try {
+      localStorage.setItem('tina_active_tab', activeTab);
+      const targetPath = activeTab === 'downloader' ? '/' : `/${activeTab}`;
+      if (window.location.pathname !== targetPath) {
+        window.history.replaceState({ tab: activeTab }, '', targetPath);
+      }
+    } catch {
+      // ignore
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      const stateTab = event.state?.tab;
+      if (stateTab && VALID_TABS.includes(stateTab)) {
+        setActiveTabState(stateTab);
+        try {
+          localStorage.setItem('tina_active_tab', stateTab);
+        } catch {
+          // ignore
+        }
+        return;
+      }
+      const pathSeg = window.location.pathname.replace(/^\/+|\/+$/g, '').toLowerCase();
+      if (VALID_TABS.includes(pathSeg as ActiveTab)) {
+        setActiveTabState(pathSeg as ActiveTab);
+      } else {
+        setActiveTabState('downloader');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Silent security fingerprint (background header only)
   const [deviceId] = useState<string>(() => getDeviceId());
 
-  // Downloader state
-  const [urlInput, setUrlInput] = useState<string>('');
+  // Downloader state (with session persistence so accidental refresh keeps last extraction)
+  const [urlInput, setUrlInput] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem('tina_last_url_input') || '';
+    } catch {
+      return '';
+    }
+  });
   const [extracting, setExtracting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
-  const [mediaResult, setMediaResult] = useState<MediaMetadata | null>(null);
+  const [mediaResult, setMediaResult] = useState<MediaMetadata | null>(() => {
+    try {
+      const cached = sessionStorage.getItem('tina_last_media_result');
+      return cached ? (JSON.parse(cached) as MediaMetadata) : null;
+    } catch {
+      return null;
+    }
+  });
   const [resultSubTab, setResultSubTab] = useState<ResultSubTab>('streams');
   const [streamFilter, setStreamFilter] = useState<'all' | 'video' | 'audio' | 'image'>('all');
   const [resolvingStreamId, setResolvingStreamId] = useState<string | null>(null);
   const [compilingPdf, setCompilingPdf] = useState<boolean>(false);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('tina_last_url_input', urlInput);
+    } catch {
+      // ignore
+    }
+  }, [urlInput]);
+
+  useEffect(() => {
+    try {
+      if (mediaResult) {
+        sessionStorage.setItem('tina_last_media_result', JSON.stringify(mediaResult));
+      }
+    } catch {
+      // ignore
+    }
+  }, [mediaResult]);
 
   // Interactive V10 Player & Carousel state
   const [previewMode, setPreviewMode] = useState<PreviewMode>('video');
@@ -163,13 +290,21 @@ export default function App() {
   const [lightboxOpen, setLightboxOpen] = useState<boolean>(false);
 
   // History & Extractors state
-  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const [historyItems, setHistoryItems] = useState<HistoryItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('tina_local_history_v1');
+      return saved ? (JSON.parse(saved) as HistoryItem[]) : [];
+    } catch {
+      return [];
+    }
+  });
   const [historySearch, setHistorySearch] = useState<string>('');
-  const [supportedSites, setSupportedSites] = useState<SupportedSiteItem[]>([]);
+  const [allSites, setAllSites] = useState<SupportedSiteItem[]>(FEATURED_SUPPORTED_SITES);
   const [totalExtractors, setTotalExtractors] = useState<number>(1615);
   const [siteSearch, setSiteSearch] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Semua');
   const [loadingSites, setLoadingSites] = useState<boolean>(false);
+  const [sitesDisplayLimit, setSitesDisplayLimit] = useState<number>(250);
 
   // FAQ Accordion state
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
@@ -177,8 +312,15 @@ export default function App() {
   // Public asset fallback state
   const [logoSrc, setLogoSrc] = useState<string>('/logo.png');
   const [thumbError, setThumbError] = useState<boolean>(false);
-  const [bannerError, setBannerError] = useState<boolean>(false);
-  const [avatarError, setAvatarError] = useState<boolean>(false);
+
+  // Persist history to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('tina_local_history_v1', JSON.stringify(historyItems.slice(0, 60)));
+    } catch {
+      // ignore
+    }
+  }, [historyItems]);
 
   // Close Three-Dots menu when clicking outside
   useEffect(() => {
@@ -242,16 +384,21 @@ export default function App() {
     }
   }, [mediaResult]);
 
-  // Sync History silently from backend
+  // Sync History silently from backend (safe JSON parsing)
   const refreshHistory = useCallback(async () => {
     try {
       const headers = { 'X-Device-ID': deviceId };
-      const histRes = await fetch('/api/history', { headers });
-      if (histRes.ok) {
-        const histData = await histRes.json();
-        if (Array.isArray(histData.items)) {
-          setHistoryItems(histData.items);
-        }
+      const { ok, data } = await safeFetchJson('/api/history', { headers });
+      if (ok && data && Array.isArray(data.items) && data.items.length > 0) {
+        setHistoryItems((prev) => {
+          const map = new Map<string, HistoryItem>();
+          for (const item of [...data.items, ...prev]) {
+            if (item && item.id && !map.has(item.id)) {
+              map.set(item.id, item);
+            }
+          }
+          return Array.from(map.values());
+        });
       }
     } catch {
       // ignore
@@ -262,35 +409,42 @@ export default function App() {
     refreshHistory();
   }, [refreshHistory]);
 
-  // Load supported sites
+  // Load full supported sites list once (with markdown fallback so it never fails)
   useEffect(() => {
     let active = true;
     setLoadingSites(true);
-    const catParam = selectedCategory === 'Semua' ? 'all' : selectedCategory.toLowerCase();
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(
-          `/api/supported-sites?q=${encodeURIComponent(siteSearch)}&category=${encodeURIComponent(catParam)}`
-        );
-        if (res.ok && active) {
-          const data = await res.json();
-          setSupportedSites(data.items || []);
-          if (data.total) setTotalExtractors(data.total);
+    loadAllSupportedSitesClient()
+      .then(({ items, total }) => {
+        if (!active) return;
+        if (Array.isArray(items) && items.length > 0) {
+          setAllSites(items);
+          setTotalExtractors(total || items.length);
         }
-      } catch {
-        // ignore
-      } finally {
+      })
+      .catch(() => {
+        // fallback already handled in loadAllSupportedSitesClient
+      })
+      .finally(() => {
         if (active) setLoadingSites(false);
-      }
-    }, 120);
+      });
 
     return () => {
       active = false;
-      clearTimeout(timer);
     };
+  }, []);
+
+  // Reset display limit when search or category changes
+  useEffect(() => {
+    setSitesDisplayLimit(250);
   }, [siteSearch, selectedCategory]);
 
-  // Extract Media Handler
+  // Filtered supported sites computed instantaneously
+  const supportedSites = useMemo(
+    () => filterSupportedSites(allSites, siteSearch, selectedCategory),
+    [allSites, siteSearch, selectedCategory]
+  );
+
+  // Extract Media Handler (safe against HTML/Unexpected token errors + client fallback)
   const handleExtract = async (customUrl?: string) => {
     const targetUrl = (customUrl ?? urlInput).trim();
     if (!targetUrl) {
@@ -303,7 +457,7 @@ export default function App() {
     setStatusNotice(null);
 
     try {
-      const response = await fetch('/api/extract', {
+      const { ok, data: payload } = await safeFetchJson('/api/extract', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -312,26 +466,48 @@ export default function App() {
         body: JSON.stringify({ url: targetUrl }),
       });
 
-      const payload = await response.json();
+      let extractedData: MediaMetadata | null = null;
+      let newHistoryItem: HistoryItem | null = null;
 
-      if (!response.ok) {
-        throw new Error(payload.error || 'Gagal memproses tautan.');
+      if (ok && payload?.data) {
+        extractedData = payload.data as MediaMetadata;
+        newHistoryItem = (payload.historyItem as HistoryItem) || null;
+      } else {
+        // Try client-side fallback if backend returned non-JSON or failed
+        const fallbackResult = await extractMediaClientFallback(targetUrl);
+        extractedData = fallbackResult.data;
+        newHistoryItem = fallbackResult.historyItem;
       }
 
-      setMediaResult(payload.data);
+      if (!extractedData) {
+        throw new Error(payload?.error || 'Gagal memproses tautan.');
+      }
+
+      setMediaResult(extractedData);
       setResultSubTab('streams');
       setStreamFilter('all');
 
-      if (payload.historyItem) {
-        setHistoryItems((prev) => [
-          payload.historyItem,
-          ...prev.filter((p) => p.id !== payload.historyItem.id),
-        ]);
-      }
+      const historyEntry: HistoryItem = newHistoryItem || {
+        id: `hist_${Date.now()}`,
+        url: targetUrl,
+        title: extractedData.title || 'Media',
+        thumbnail: extractedData.thumbnail || '',
+        platform: extractedData.platform || 'WEB',
+        author: extractedData.author || 'Kreator',
+        duration: extractedData.durationString || '--:--',
+        quality: extractedData.downloads?.[0]?.quality || 'HD',
+        createdAt: new Date().toISOString(),
+        metadata: extractedData,
+      };
+
+      setHistoryItems((prev) => [
+        historyEntry,
+        ...prev.filter((p) => p.id !== historyEntry.id && p.url !== historyEntry.url),
+      ]);
 
       refreshHistory();
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Gagal mengekstrak media.');
+      setErrorMessage(err?.message || 'Gagal mengekstrak media. Pastikan tautan bersifat publik.');
     } finally {
       setExtracting(false);
     }
@@ -359,7 +535,7 @@ export default function App() {
       let targetStreamUrl = stream.url;
       if (stream.needsResolve) {
         setStatusNotice(`Menyiapkan berkas ${stream.quality}...`);
-        const res = await fetch('/api/resolve', {
+        const { ok, data } = await safeFetchJson('/api/resolve', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -367,9 +543,8 @@ export default function App() {
           },
           body: JSON.stringify({ tokenUrl: stream.url }),
         });
-        const data = await res.json();
-        if (!res.ok || !data.url) {
-          throw new Error(data.error || 'Gagal melakukan resolve media.');
+        if (!ok || !data?.url) {
+          throw new Error(data?.error || 'Gagal melakukan resolve media.');
         }
         targetStreamUrl = data.url;
       }
@@ -1955,7 +2130,7 @@ export default function App() {
             >
               <div className="flex flex-wrap items-end justify-between gap-4 border-b border-neutral-200 dark:border-neutral-800 pb-4">
                 <div>
-                  <h1 className="text-xl font-bold text-neutral-950 dark:text-white">
+                  <h1 className="text-xl font-bold text-neutral-950 dark:text-white tabular-nums">
                     Daftar Situs Didukung ({supportedSites.length.toLocaleString('id-ID')})
                   </h1>
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
@@ -1987,47 +2162,121 @@ export default function App() {
                   type="text"
                   value={siteSearch}
                   onChange={(e) => setSiteSearch(e.target.value)}
-                  placeholder="Cari nama platform (contoh: tiktok, youtube, instagram, spotify, pixiv)..."
-                  className="w-full pl-9 pr-4 py-2.5 text-xs sm:text-sm bg-white dark:bg-surface border border-neutral-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:border-neutral-950 dark:focus:border-neutral-300"
+                  placeholder="Cari nama platform (contoh: tiktok, youtube, instagram, spotify, pixiv, bilibili)..."
+                  className="w-full pl-9 pr-10 py-2.5 text-xs sm:text-sm bg-white dark:bg-surface border border-neutral-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:border-neutral-950 dark:focus:border-neutral-300"
                 />
+                {siteSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setSiteSearch('')}
+                    aria-label="Bersihkan pencarian"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-950 dark:hover:text-white cursor-pointer"
+                  >
+                    <i className="fa-solid fa-xmark text-xs" />
+                  </button>
+                )}
               </div>
 
               <div className="bg-white dark:bg-surface border border-neutral-200 dark:border-neutral-800 rounded-xl overflow-hidden">
-                {loadingSites ? (
+                {loadingSites && allSites.length === 0 ? (
                   <div className="p-12 text-center text-xs text-neutral-500">
                     <i className="fa-solid fa-circle-notch fa-spin mr-2" />
                     Memuat daftar situs...
                   </div>
-                ) : (
-                  <div className="max-h-[600px] overflow-y-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead className="sticky top-0 bg-paper dark:bg-paper border-b border-neutral-200 dark:border-neutral-800 text-[11px] font-semibold uppercase text-neutral-500">
-                        <tr>
-                          <th className="py-3 px-4 w-16">#</th>
-                          <th className="py-3 px-4">Platform</th>
-                          <th className="py-3 px-4">Kategori</th>
-                          <th className="py-3 px-4">Dukungan Unduhan</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800 text-xs">
-                        {supportedSites.map((site, idx) => (
-                          <tr
-                            key={`${site.name}_${idx}`}
-                            className="hover:bg-neutral-50 dark:hover:bg-neutral-900/50"
-                          >
-                            <td className="py-2.5 px-4 text-neutral-400">{idx + 1}</td>
-                            <td className="py-2.5 px-4 font-bold text-neutral-950 dark:text-neutral-100">
-                              {site.name}
-                            </td>
-                            <td className="py-2.5 px-4 text-neutral-500">{site.category}</td>
-                            <td className="py-2.5 px-4 text-neutral-600 dark:text-neutral-300">
-                              {site.description}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                ) : supportedSites.length === 0 ? (
+                  <div className="p-12 text-center space-y-3">
+                    <i className="fa-solid fa-globe text-xl text-neutral-400" />
+                    <div className="text-sm font-bold text-neutral-950 dark:text-white">
+                      Platform tidak ditemukan untuk &ldquo;{siteSearch}&rdquo;
+                    </div>
+                    <p className="text-xs text-neutral-500 max-w-md mx-auto">
+                      Meski tidak tertulis di pencarian, Anda tetap dapat menempelkan tautan situs tersebut di Beranda Unduhan karena mesin ekstraktor generik mendukung ribuan domain lainnya.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSiteSearch('');
+                        setSelectedCategory('Semua');
+                      }}
+                      className="px-3.5 py-2 text-xs font-bold bg-neutral-950 text-white dark:bg-white dark:text-neutral-950 rounded-lg cursor-pointer"
+                    >
+                      Reset Filter Situs
+                    </button>
                   </div>
+                ) : (
+                  <>
+                    <div className="max-h-[620px] overflow-y-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead className="sticky top-0 z-10 bg-paper dark:bg-paper border-b border-neutral-200 dark:border-neutral-800 text-[11px] font-semibold uppercase text-neutral-500">
+                          <tr>
+                            <th className="py-3 px-4 w-16">#</th>
+                            <th className="py-3 px-4">Platform / Ekstraktor</th>
+                            <th className="py-3 px-4">Kategori</th>
+                            <th className="py-3 px-4">Dukungan Unduhan</th>
+                            <th className="py-3 px-4 text-right">Aksi</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800 text-xs">
+                          {supportedSites.slice(0, sitesDisplayLimit).map((site, idx) => (
+                            <tr
+                              key={`${site.name}_${idx}`}
+                              className="hover:bg-neutral-50 dark:hover:bg-neutral-900/50 transition-colors"
+                            >
+                              <td className="py-2.5 px-4 text-neutral-400 font-mono tabular-nums">
+                                {idx + 1}
+                              </td>
+                              <td className="py-2.5 px-4 font-bold text-neutral-950 dark:text-neutral-100">
+                                {site.name}
+                              </td>
+                              <td className="py-2.5 px-4 text-neutral-500">{site.category}</td>
+                              <td className="py-2.5 px-4 text-neutral-600 dark:text-neutral-300">
+                                {site.description}
+                              </td>
+                              <td className="py-2.5 px-4 text-right whitespace-nowrap">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveTab('downloader');
+                                    setStatusNotice(
+                                      `Silakan tempel tautan dari ${site.name} pada kolom unduhan.`
+                                    );
+                                  }}
+                                  className="px-2.5 py-1 text-[11px] font-bold border border-neutral-300 dark:border-neutral-700 rounded-md text-neutral-700 dark:text-neutral-300 hover:bg-neutral-950 hover:text-white dark:hover:bg-white dark:hover:text-neutral-950 transition-colors cursor-pointer"
+                                >
+                                  Unduh
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {supportedSites.length > sitesDisplayLimit && (
+                      <div className="px-4 py-3 bg-paper dark:bg-paper border-t border-neutral-200 dark:border-neutral-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+                        <span className="text-neutral-500 tabular-nums">
+                          Menampilkan {sitesDisplayLimit.toLocaleString('id-ID')} dari{' '}
+                          {supportedSites.length.toLocaleString('id-ID')} situs didukung
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSitesDisplayLimit((prev) => prev + 300)}
+                            className="px-3 py-1.5 font-bold border border-neutral-300 dark:border-neutral-700 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-900 transition-colors cursor-pointer"
+                          >
+                            +300 Lagi
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSitesDisplayLimit(supportedSites.length)}
+                            className="px-3 py-1.5 font-bold bg-neutral-950 text-white dark:bg-white dark:text-neutral-950 rounded-lg cursor-pointer"
+                          >
+                            Tampilkan Semua ({supportedSites.length.toLocaleString('id-ID')})
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </motion.div>
@@ -2131,102 +2380,19 @@ export default function App() {
           )}
 
           {/* =========================================================
-              VIEW 6: PROFILE DEVELOPER — NIMZZ (MONOCHROME SAAS)
+              VIEW 6: PROFILE DEVELOPER — NIMZZ (REMADE EDITORIAL STUDIO)
              ========================================================= */}
           {activeTab === 'developer' && (
-            <motion.div
-              key="view-developer"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.18 }}
-              className="space-y-6"
-            >
-              <div className="bg-white dark:bg-surface border border-neutral-200 dark:border-neutral-800 rounded-xl overflow-hidden">
-                {/* 16:9 Banner from /banner.jpg */}
-                <div className="w-full aspect-video max-h-72 bg-neutral-900 overflow-hidden border-b border-neutral-200 dark:border-neutral-800">
-                  {!bannerError ? (
-                    <img
-                      src="/banner.jpg"
-                      alt="Nimzz Banner"
-                      referrerPolicy="no-referrer"
-                      onError={() => setBannerError(true)}
-                      className="w-full h-full object-cover object-center"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-neutral-900" />
-                  )}
-                </div>
-
-                {/* Developer Identity & Social Matrix */}
-                <div className="px-6 sm:px-8 pb-8">
-                  <div className="relative -mt-12 sm:-mt-14 mb-5 flex items-end gap-4">
-                    <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-xl border-4 border-white dark:border-surface bg-neutral-900 overflow-hidden shrink-0">
-                      {!avatarError ? (
-                        <img
-                          src="/avatar.jpg"
-                          alt="Nimzz Avatar"
-                          referrerPolicy="no-referrer"
-                          onError={() => setAvatarError(true)}
-                          className="w-full h-full object-cover object-top scale-125"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-white text-2xl font-bold">
-                          N
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="pb-1">
-                      <div className="flex items-center gap-2">
-                        <h1 className="text-2xl font-bold text-neutral-950 dark:text-white">
-                          Nimzz
-                        </h1>
-                        <i className="fa-solid fa-circle-check text-neutral-950 dark:text-white text-sm" />
-                      </div>
-                      <p className="text-xs font-mono text-neutral-500 dark:text-neutral-400">
-                        Developer & Creator of Tina Downloader
-                      </p>
-                    </div>
-                  </div>
-
-                  <p className="text-xs sm:text-sm text-neutral-600 dark:text-neutral-300 max-w-3xl leading-relaxed mb-6">
-                    Pengembang di balik <strong>Tina Downloader</strong>. Berfokus menghadirkan web tools yang bersih, presisi, minimalis, dan nyaman digunakan kapan saja. Terhubung melalui akun dan saluran sosial resmi di bawah ini:
-                  </p>
-
-                  {/* 4 Social Links in Monochrome SaaS Hairline Grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-neutral-200 dark:divide-neutral-800 border border-neutral-200 dark:border-neutral-800 rounded-xl overflow-hidden bg-paper dark:bg-paper">
-                    {NIMZZ_SOCIAL_ACCOUNTS.map((acc) => (
-                      <a
-                        key={acc.platform}
-                        href={acc.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="group p-4 hover:bg-neutral-100 dark:hover:bg-neutral-900 transition-colors flex flex-col justify-between gap-3"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="w-8 h-8 rounded-lg bg-neutral-950 text-white dark:bg-white dark:text-neutral-950 flex items-center justify-center text-sm">
-                            <i className={acc.icon} />
-                          </span>
-                          <i className="fa-solid fa-arrow-up-right-from-square text-xs text-neutral-400 group-hover:text-neutral-950 dark:group-hover:text-white transition-colors" />
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-neutral-950 dark:text-white">
-                            {acc.platform}
-                          </div>
-                          <div className="text-[11px] font-mono text-neutral-500 dark:text-neutral-400 mt-0.5 truncate">
-                            {acc.handle}
-                          </div>
-                          <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1.5 leading-snug">
-                            {acc.description}
-                          </div>
-                        </div>
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
+            <DeveloperPage
+              socialAccounts={NIMZZ_SOCIAL_ACCOUNTS}
+              totalExtractors={totalExtractors}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+              onQuickTestUrl={(testUrl) => {
+                setUrlInput(testUrl);
+                setActiveTab('downloader');
+                handleExtract(testUrl);
+              }}
+            />
           )}
         </AnimatePresence>
       </main>

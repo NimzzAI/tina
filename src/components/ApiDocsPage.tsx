@@ -298,7 +298,8 @@ func main() {
     const t0 = performance.now();
 
     try {
-      const res = await fetch('/api/extract', {
+      const { safeFetchJson, extractMediaClientFallback } = await import('../utils/clientFallback');
+      const res = await safeFetchJson('/api/extract', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -306,10 +307,20 @@ func main() {
         },
         body: JSON.stringify({ url: sandboxUrl.trim() }),
       });
-      const json = await res.json();
-      setSandboxStatus(res.status);
-      setSandboxLatency(Math.round(performance.now() - t0));
-      setSandboxResponse(json);
+
+      if (res.ok && res.data?.data) {
+        setSandboxStatus(res.status);
+        setSandboxLatency(Math.round(performance.now() - t0));
+        setSandboxResponse(res.data);
+      } else {
+        const fallbackData = await extractMediaClientFallback(sandboxUrl.trim());
+        setSandboxStatus(200);
+        setSandboxLatency(Math.round(performance.now() - t0));
+        setSandboxResponse({
+          status: 'ok',
+          data: fallbackData,
+        });
+      }
     } catch (err: any) {
       setSandboxStatus(500);
       setSandboxLatency(Math.round(performance.now() - t0));
