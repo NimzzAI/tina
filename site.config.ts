@@ -1,6 +1,8 @@
-const SITE_URL = 'https://tina-downloader.app';
+const SITE_URL = 'https://tina-downloader.web.id';
 
-export const siteConfig = {
+type Env = Record<string, string | undefined>;
+
+const baseConfig = {
   url: SITE_URL,
   name: 'Tina Downloader',
   shortName: 'Tina',
@@ -69,8 +71,14 @@ export const siteConfig = {
   links: {
     github: 'https://github.com/NimzzAI',
   },
-  googleSiteVerification: '',
-  bingSiteVerification: '',
 };
 
-export type SiteConfig = typeof siteConfig;
+export function createSiteConfig(env: Env) {
+  return {
+    ...baseConfig,
+    googleSiteVerification: env.GOOGLE_SITE_VERIFICATION || '',
+    bingSiteVerification: env.BING_SITE_VERIFICATION || '',
+  };
+}
+
+export type SiteConfig = ReturnType<typeof createSiteConfig>;

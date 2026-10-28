@@ -1,11 +1,12 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
-import {siteConfig} from './site.config';
+import {defineConfig, loadEnv} from 'vite';
+import {createSiteConfig} from './site.config';
 import {siteMeta} from './plugins/siteMeta';
 
-export default defineConfig(() => {
+export default defineConfig(({mode}) => {
+  const siteConfig = createSiteConfig(loadEnv(mode, process.cwd(), ''));
   return {
     plugins: [react(), tailwindcss(), siteMeta(siteConfig)],
     resolve: {

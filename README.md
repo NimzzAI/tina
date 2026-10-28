@@ -189,7 +189,7 @@ go build -o server/engines/tina-go-worker server/go_worker.go
 Seluruh pengaturan metadata ada di `site.config.ts`. Tidak ada variabel lingkungan yang diperlukan. Baris pertama berkas berisi URL publik situs:
 
 ```ts
-const SITE_URL = 'https://tina-downloader.app';
+const SITE_URL = 'https://tina-downloader.web.id';
 ```
 
 Ubah nilai ini ke domain yang sebenarnya sebelum build.

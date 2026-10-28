@@ -200,7 +200,7 @@ export const ApiDocsPage: React.FC<ApiDocsPageProps> = ({
   lastExtractedMedia,
 }) => {
   const origin =
-    typeof window !== 'undefined' ? window.location.origin : 'https://tina-downloader.app';
+    typeof window !== 'undefined' ? window.location.origin : 'https://tina-downloader.web.id';
 
   const [codeLang, setCodeLang] = useState<CodeLang>('curl');
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
