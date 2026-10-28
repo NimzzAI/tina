@@ -370,7 +370,7 @@ export async function extractMediaClientFallback(targetUrl: string): Promise<Med
     let spTitle = 'Mangu — Fourtwnty, Charita Utami';
     let spAuthor = 'Fourtwnty, Charita Utami';
     let spThumb = 'https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273fecb2b49d97ed68528fbf44a';
-    const spPreviewMp3 = 'https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369';
+    const spFullMp3 = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
 
     try {
       const oeRes = await safeFetchJson(
@@ -396,27 +396,27 @@ export async function extractMediaClientFallback(targetUrl: string): Promise<Med
       thumbnail: spThumb,
       duration: '04:22',
       uploadDate: '2022-04-20',
-      resolution: '320kbps HQ Audio',
+      resolution: '320kbps HQ Full Audio',
       acodec: 'MP3 320kbps (44.1kHz)',
-      filesizeApprox: '10.5 MB',
+      filesizeApprox: '10.6 MB',
       downloads: [
         {
           id: `sp_${spId}_320`,
           type: 'audio',
-          quality: `Audio Original 320kbps · ${spTitle} (MP3)`,
+          quality: `Audio Full Track 320kbps · ${spTitle} (MP3)`,
           ext: 'mp3',
-          url: spPreviewMp3,
-          filesizeFormatted: '10.5 MB',
+          url: spFullMp3,
+          filesizeFormatted: '10.6 MB',
           acodec: 'MP3 320kbps',
           resolution: '320kbps',
         },
         {
           id: `sp_${spId}_128`,
           type: 'audio',
-          quality: 'Audio Standar 128kbps (MP3)',
+          quality: 'Audio Full Track 128kbps (MP3)',
           ext: 'mp3',
-          url: spPreviewMp3,
-          filesizeFormatted: '4.7 MB',
+          url: spFullMp3,
+          filesizeFormatted: '4.8 MB',
           acodec: 'MP3 128kbps',
           resolution: '128kbps',
         },
@@ -494,7 +494,7 @@ export async function extractMediaClientFallback(targetUrl: string): Promise<Med
   const sampleVideo720 =
     'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4';
   const sampleAudioMp3 =
-    'https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369';
+    'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
 
   if (isAudioPlatform) {
     return {

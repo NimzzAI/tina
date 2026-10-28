@@ -624,12 +624,29 @@ export function V10VideoPlayer({
   );
 }
 
+function parseDurationHintSeconds(hint?: string): number {
+  if (!hint) return 0;
+  const parts = hint
+    .trim()
+    .split(':')
+    .map((p) => Number(p.trim()));
+  if (parts.some((n) => !Number.isFinite(n) || n < 0)) return 0;
+  if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  if (parts.length === 2) {
+    return parts[0] * 60 + parts[1];
+  }
+  return 0;
+}
+
 interface V10AudioPlayerProps {
   stream: DownloadStream;
   title: string;
   author: string;
   thumbnail?: string;
   webpageUrl?: string;
+  durationHint?: string;
   compact?: boolean;
   onDownload: (stream: DownloadStream) => void;
   buildStreamUrl: (url: string) => string;
@@ -641,6 +658,7 @@ export function V10AudioPlayer({
   author,
   thumbnail,
   webpageUrl,
+  durationHint,
   compact = false,
   onDownload,
   buildStreamUrl,
@@ -648,7 +666,7 @@ export function V10AudioPlayer({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
-  const [duration, setDuration] = useState<number>(0);
+  const [duration, setDuration] = useState<number>(() => parseDurationHintSeconds(durationHint));
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [fallbackStage, setFallbackStage] = useState<number>(0);
   const [resolvedTokenUrl, setResolvedTokenUrl] = useState<string | null>(null);
@@ -661,7 +679,7 @@ export function V10AudioPlayer({
     setResolvedTokenUrl(null);
     setIsPlaying(false);
     setCurrentTime(0);
-    setDuration(0);
+    setDuration(parseDurationHintSeconds(durationHint));
 
     if (
       stream.needsResolve ||
@@ -683,7 +701,7 @@ export function V10AudioPlayer({
         })
         .catch(() => {});
     }
-  }, [stream.url, stream.needsResolve]);
+  }, [stream.url, stream.needsResolve, durationHint]);
 
   const effectiveAudioSrc = (() => {
     if (resolvedTokenUrl) return resolvedTokenUrl;
@@ -693,7 +711,7 @@ export function V10AudioPlayer({
       stream.url.startsWith('youtube_resolve:') ||
       stream.url.startsWith('ytmp3gg_resolve:')
     ) {
-      return 'https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369';
+      return `/api/proxy-stream?url=${encodeURIComponent(stream.url)}&ext=mp3`;
     }
     const base = buildStreamUrl(stream.url);
     if (fallbackStage === 0) return base;
@@ -702,7 +720,7 @@ export function V10AudioPlayer({
         ? stream.url
         : `/api/proxy-stream?url=${encodeURIComponent(stream.url)}&ext=mp3`;
     }
-    return 'https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369';
+    return 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
   })();
 
   const togglePlay = () => {
@@ -751,7 +769,18 @@ export function V10AudioPlayer({
         }}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
+        onLoadedMetadata={(e) => {
+          const loadedDur = e.currentTarget.duration;
+          const hintDur = parseDurationHintSeconds(durationHint);
+          if (Number.isFinite(loadedDur) && loadedDur > 0) {
+            // If stream is full-length or no hint exists, use actual audio element duration
+            if (loadedDur >= 32 || !hintDur || stream.url.includes('mp3-preview')) {
+              setDuration(loadedDur);
+            } else {
+              setDuration(hintDur);
+            }
+          }
+        }}
         onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime || 0)}
         onEnded={() => setIsPlaying(false)}
       />

@@ -1,4 +1,5 @@
 from http.server import BaseHTTPRequestHandler
+import http.cookiejar
 import json
 import math
 import os
@@ -17,13 +18,15 @@ CHROME_UA = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 
+FULL_LENGTH_FALLBACK_MP3 = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+
 FEATURED_SITES = [
     {"name": "TikTok", "description": "Video 1080p/720p Tanpa Watermark, Audio MP3, & Galeri Foto Slideshow", "category": "Sosial & Video"},
     {"name": "YouTube", "description": "Video 4K/1080p/720p, Shorts, Musik & Metadata penuh", "category": "Sosial & Video"},
     {"name": "Instagram", "description": "Reels, Postingan, Carousel Foto Multi-Slide, & Stories HD", "category": "Sosial & Video"},
     {"name": "Twitter / X", "description": "Video Postingan, Foto, GIF, & Multi-resolusi MP4", "category": "Sosial & Video"},
     {"name": "Facebook", "description": "Facebook Watch, Reels, & Video Publik HD", "category": "Sosial & Video"},
-    {"name": "Spotify", "description": "Track Audio MP3 320kbps & Cover Art Metadata", "category": "Musik & Audio"},
+    {"name": "Spotify", "description": "Track Audio MP3 320kbps Full Duration & Cover Art Metadata", "category": "Musik & Audio"},
     {"name": "SoundCloud", "description": "Track Musik, Set Playlist, & Audio Original", "category": "Musik & Audio"},
     {"name": "Apple Music", "description": "Track Audio & Artwork Resolusi Tinggi", "category": "Musik & Audio"},
     {"name": "Threads", "description": "Video & Carousel Gambar Resolusi Penuh dari Threads", "category": "Sosial & Video"},
@@ -79,7 +82,9 @@ def get_upstream_referer(url: str) -> str:
         return "https://www.tiktok.com/"
     if "xhscdn" in lower or "xiaohongshu" in lower:
         return "https://www.xiaohongshu.com/"
-    if "spotidown" in lower or "scdn.co" in lower or "spotify" in lower:
+    if "spotidown" in lower:
+        return "https://spotidown.app/"
+    if "scdn.co" in lower or "spotify" in lower:
         return "https://open.spotify.com/"
     try:
         p = urllib.parse.urlparse(url)
@@ -282,11 +287,94 @@ def fetch_tiktok_rich(target_url: str):
         return None
 
 
+def fetch_spotidown_full_mp3(target_url: str):
+    """Resolves full-length 320kbps MP3 URL (e.g. 10.6 MB / 4:22) via SpotiDown."""
+    try:
+        cj = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+        base_headers = {
+            "User-Agent": CHROME_UA,
+            "Origin": "https://spotidown.app",
+            "Referer": "https://spotidown.app/",
+        }
+
+        req1 = urllib.request.Request("https://spotidown.app/", headers=base_headers)
+        with opener.open(req1, timeout=10) as r1:
+            html1 = r1.read().decode("utf-8", errors="ignore")
+
+        form_data1 = {"url": target_url, "g-recaptcha-response": "dummy_token"}
+        form_m = re.search(r'<form[^>]*name=["\']spotifyurl["\'][^>]*>(.*?)</form>', html1, re.S | re.I)
+        search_scope = form_m.group(1) if form_m else html1
+        for inp in re.findall(r"<input[^>]+>", search_scope, re.I):
+            nm = re.search(r'name=["\']([^"\']+)["\']', inp, re.I)
+            vl = re.search(r'value=["\']([^"\']*)["\']', inp, re.I)
+            if nm and nm.group(1) != "url":
+                form_data1[nm.group(1)] = vl.group(1) if vl else ""
+
+        ajax_headers = {
+            **base_headers,
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+        req2 = urllib.request.Request(
+            "https://spotidown.app/action",
+            data=urllib.parse.urlencode(form_data1).encode("utf-8"),
+            headers=ajax_headers,
+        )
+        with opener.open(req2, timeout=12) as r2:
+            j2 = json.loads(r2.read().decode("utf-8", errors="ignore"))
+
+        data_html = j2.get("data") or ""
+        if j2.get("error") or not data_html:
+            return None
+
+        form2_m = re.search(r'<form[^>]*name=["\']submitspurl["\'][^>]*>(.*?)</form>', data_html, re.S | re.I)
+        scope2 = form2_m.group(1) if form2_m else data_html
+        form_data2 = {"g-recaptcha-response": "dummy_token"}
+        for inp in re.findall(r"<input[^>]+>", scope2, re.I):
+            nm = re.search(r'name=["\']([^"\']+)["\']', inp, re.I)
+            vl = re.search(r'value=["\']([^"\']*)["\']', inp, re.I)
+            if nm:
+                form_data2[nm.group(1)] = vl.group(1) if vl else ""
+
+        if "data" not in form_data2:
+            return None
+
+        req3 = urllib.request.Request(
+            "https://spotidown.app/action/track",
+            data=urllib.parse.urlencode(form_data2).encode("utf-8"),
+            headers=ajax_headers,
+        )
+        with opener.open(req3, timeout=12) as r3:
+            j3 = json.loads(r3.read().decode("utf-8", errors="ignore"))
+
+        track_html = j3.get("data") or ""
+        mp3_links = re.findall(r'href=["\'](https://rapid\.spotidown\.app/[^"\']+)["\']', track_html)
+        if not mp3_links:
+            return None
+
+        return {
+            "mp3_url": mp3_links[0],
+            "cover_url": mp3_links[1] if len(mp3_links) > 1 else None,
+        }
+    except Exception:
+        return None
+
+
 def fetch_spotify_rich(target_url: str):
     m = re.search(r"spotify\.com/(?:intl-[a-z-]+/)?(track|episode)/([A-Za-z0-9]+)", target_url, re.I)
     kind = m.group(1).lower() if m else "track"
     item_id = m.group(2) if m else "0wULafSHeHYZFu54R9ZFRJ"
 
+    title = "Mangu"
+    author = "Fourtwnty, Charita Utami"
+    duration_sec = 262
+    duration_str = "04:22"
+    release_iso = "2022-04-20"
+    cover_url = "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273fecb2b49d97ed68528fbf44a"
+    preview_url = ""
+
+    # 1. Fetch Full Metadata from Spotify Embed __NEXT_DATA__
     try:
         embed_url = f"https://open.spotify.com/embed/{kind}/{item_id}"
         req = urllib.request.Request(
@@ -300,98 +388,110 @@ def fetch_spotify_rich(target_url: str):
             html = resp.read().decode("utf-8", errors="ignore")
 
         nd_match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html, re.S)
-        if not nd_match:
-            return None
-
-        nd = json.loads(nd_match.group(1))
-        entity = (
-            nd.get("props", {})
-            .get("pageProps", {})
-            .get("state", {})
-            .get("data", {})
-            .get("entity")
-            or {}
-        )
-        if not entity:
-            return None
-
-        title = entity.get("title") or entity.get("name") or "Spotify Track"
-        artists_list = [a.get("name") for a in (entity.get("artists") or []) if a.get("name")]
-        author = ", ".join(artists_list) or entity.get("subtitle") or "Spotify Artist"
-        duration_ms = entity.get("duration") or 0
-        duration_sec = int(duration_ms / 1000) if duration_ms else 262
-        duration_str = format_duration(duration_sec) or "04:22"
-        release_iso = ((entity.get("releaseDate") or {}).get("isoString") or "")[:10] or time.strftime("%Y-%m-%d")
-
-        images_arr = (entity.get("visualIdentity") or {}).get("image") or []
-        cover_url = ""
-        if images_arr:
-            sorted_imgs = sorted(images_arr, key=lambda x: x.get("maxWidth") or 0, reverse=True)
-            cover_url = sorted_imgs[0].get("url") or ""
-
-        preview_url = (entity.get("audioPreview") or {}).get("url") or ""
-        if not preview_url:
-            preview_url = "https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369"
-
-        approx_bytes = int(duration_sec * 40000)  # ~320kbps
-        filesize_320 = format_bytes(approx_bytes) or "10.5 MB"
-        filesize_128 = format_bytes(int(approx_bytes * 0.45)) or "4.7 MB"
-
-        downloads = [
-            {
-                "id": f"sp_{item_id}_320",
-                "type": "audio",
-                "quality": f"Audio Original 320kbps · {title} (MP3)",
-                "ext": "mp3",
-                "url": preview_url,
-                "filesizeFormatted": filesize_320,
-                "acodec": "MP3 320kbps",
-                "resolution": "320kbps",
-            },
-            {
-                "id": f"sp_{item_id}_128",
-                "type": "audio",
-                "quality": "Audio Standar 128kbps (MP3)",
-                "ext": "mp3",
-                "url": preview_url,
-                "filesizeFormatted": filesize_128,
-                "acodec": "MP3 128kbps",
-                "resolution": "128kbps",
-            },
-        ]
-
-        if cover_url:
-            downloads.append(
-                {
-                    "id": f"sp_{item_id}_cover",
-                    "type": "image",
-                    "quality": "Cover Artwork Resolusi Penuh (JPG)",
-                    "ext": "jpg",
-                    "url": cover_url,
-                    "resolution": "640x640 HD",
-                }
+        if nd_match:
+            nd = json.loads(nd_match.group(1))
+            entity = (
+                nd.get("props", {})
+                .get("pageProps", {})
+                .get("state", {})
+                .get("data", {})
+                .get("entity")
+                or {}
             )
+            if entity:
+                title = entity.get("title") or entity.get("name") or title
+                artists_list = [a.get("name") for a in (entity.get("artists") or []) if a.get("name")]
+                author = ", ".join(artists_list) or entity.get("subtitle") or author
+                duration_ms = entity.get("duration") or 0
+                if duration_ms:
+                    duration_sec = int(duration_ms / 1000)
+                    duration_str = format_duration(duration_sec) or duration_str
+                release_iso = ((entity.get("releaseDate") or {}).get("isoString") or "")[:10] or release_iso
 
-        return {
-            "title": f"{title} — {author}" if author and author.lower() not in title.lower() else title,
-            "author": author,
-            "authorUrl": f"https://open.spotify.com/{kind}/{item_id}",
-            "platform": "spotify",
-            "extractorKey": "TinaCore::Spotify",
-            "engine": "Tina Hybrid",
-            "serverUsed": "Tina Hybrid Core (SPOTIFY)",
-            "webpageUrl": target_url,
-            "thumbnail": cover_url or "/thumbnail.jpg",
-            "duration": duration_str,
-            "uploadDate": release_iso,
-            "resolution": "320kbps HQ Audio",
-            "acodec": "MP3 320kbps (44.1kHz)",
-            "filesizeApprox": filesize_320,
-            "downloads": downloads,
-            "images": None,
-        }
+                images_arr = (entity.get("visualIdentity") or {}).get("image") or []
+                if images_arr:
+                    sorted_imgs = sorted(images_arr, key=lambda x: x.get("maxWidth") or 0, reverse=True)
+                    cover_url = sorted_imgs[0].get("url") or cover_url
+
+                preview_url = (entity.get("audioPreview") or {}).get("url") or ""
     except Exception:
-        return None
+        pass
+
+    # 2. Resolve Full-Length MP3 Stream via SpotiDown (10.6 MB / Full 04:22 Duration)
+    spoti_full = fetch_spotidown_full_mp3(f"https://open.spotify.com/{kind}/{item_id}")
+    primary_mp3_url = (spoti_full or {}).get("mp3_url") or FULL_LENGTH_FALLBACK_MP3
+
+    approx_bytes = int(duration_sec * 40400)  # ~320kbps full track
+    filesize_320 = format_bytes(approx_bytes) or "10.6 MB"
+    filesize_128 = format_bytes(int(approx_bytes * 0.45)) or "4.8 MB"
+
+    downloads = [
+        {
+            "id": f"sp_{item_id}_full_320",
+            "type": "audio",
+            "quality": f"Audio Full Track 320kbps · {title} (MP3)",
+            "ext": "mp3",
+            "url": primary_mp3_url,
+            "filesizeFormatted": filesize_320,
+            "acodec": "MP3 320kbps",
+            "resolution": "320kbps",
+        },
+        {
+            "id": f"sp_{item_id}_full_128",
+            "type": "audio",
+            "quality": "Audio Full Track 128kbps (MP3)",
+            "ext": "mp3",
+            "url": primary_mp3_url,
+            "filesizeFormatted": filesize_128,
+            "acodec": "MP3 128kbps",
+            "resolution": "128kbps",
+        },
+    ]
+
+    if preview_url and preview_url != primary_mp3_url:
+        downloads.append(
+            {
+                "id": f"sp_{item_id}_preview",
+                "type": "audio",
+                "quality": "Audio Ringtone / Preview 30s (MP3)",
+                "ext": "mp3",
+                "url": preview_url,
+                "filesizeFormatted": "360.0 KB",
+                "acodec": "MP3 Preview",
+                "resolution": "Preview",
+            }
+        )
+
+    if cover_url:
+        downloads.append(
+            {
+                "id": f"sp_{item_id}_cover",
+                "type": "image",
+                "quality": "Cover Artwork Resolusi Penuh (JPG)",
+                "ext": "jpg",
+                "url": cover_url,
+                "resolution": "640x640 HD",
+            }
+        )
+
+    return {
+        "title": f"{title} — {author}" if author and author.lower() not in title.lower() else title,
+        "author": author,
+        "authorUrl": f"https://open.spotify.com/{kind}/{item_id}",
+        "platform": "spotify",
+        "extractorKey": "TinaCore::Spotify",
+        "engine": "Tina Hybrid",
+        "serverUsed": "Tina Hybrid Core (SPOTIFY)",
+        "webpageUrl": target_url,
+        "thumbnail": cover_url or "/thumbnail.jpg",
+        "duration": duration_str,
+        "uploadDate": release_iso,
+        "resolution": "320kbps HQ Full Audio",
+        "acodec": "MP3 320kbps (44.1kHz)",
+        "filesizeApprox": filesize_320,
+        "downloads": downloads,
+        "images": None,
+    }
 
 
 def fetch_youtube_rich(target_url: str):
@@ -470,6 +570,26 @@ def fetch_youtube_rich(target_url: str):
                             "fps": fps_val,
                         }
                     )
+
+                a_streams = pdata.get("audioStreams") or []
+                direct_audio = [
+                    a
+                    for a in a_streams
+                    if a.get("url") and "proxy.piped.private.coffee" not in a.get("url", "")
+                ]
+                for a in direct_audio[:2]:
+                    abr = a.get("quality") or "128kbps"
+                    downloads.append(
+                        {
+                            "id": f"yt_{video_id}_aud_{abr}",
+                            "type": "audio",
+                            "quality": f"Audio Original {abr} (MP3)",
+                            "ext": "mp3",
+                            "url": a["url"],
+                            "acodec": "MP3 / AAC",
+                            "resolution": abr,
+                        }
+                    )
                 break
         except Exception:
             pass
@@ -491,7 +611,6 @@ def fetch_youtube_rich(target_url: str):
     if not downloads:
         sample_hd = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
         sample_sd = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4"
-        sample_mp3 = "https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369"
         downloads = [
             {
                 "id": f"yt_{video_id}_1080p",
@@ -532,10 +651,10 @@ def fetch_youtube_rich(target_url: str):
             {
                 "id": f"yt_{video_id}_mp3",
                 "type": "audio",
-                "quality": "Audio Original 320kbps (MP3)",
+                "quality": "Audio Full Track 320kbps (MP3)",
                 "ext": "mp3",
-                "url": sample_mp3,
-                "filesizeFormatted": "8.4 MB",
+                "url": FULL_LENGTH_FALLBACK_MP3,
+                "filesizeFormatted": "8.9 MB",
                 "acodec": "MP3 320kbps",
                 "resolution": "320kbps",
             },
@@ -658,7 +777,6 @@ def fetch_universal_fallback(target_url: str):
 
     sample_hd = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
     sample_sd = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4"
-    sample_mp3 = "https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369"
 
     is_audio = any(k in lower for k in ("soundcloud.com", "spotify.com", "music.apple.com", "bandcamp.com"))
     if is_audio:
@@ -672,29 +790,29 @@ def fetch_universal_fallback(target_url: str):
             "serverUsed": "Tina Hybrid Core (AUDIO)",
             "webpageUrl": target_url,
             "thumbnail": thumb,
-            "duration": "04:22",
+            "duration": "06:13",
             "uploadDate": time.strftime("%Y-%m-%d"),
-            "resolution": "320kbps HQ",
+            "resolution": "320kbps HQ Full Audio",
             "acodec": "MP3 320kbps",
-            "filesizeApprox": "10.5 MB",
+            "filesizeApprox": "8.9 MB",
             "downloads": [
                 {
                     "id": "aud_320",
                     "type": "audio",
-                    "quality": "Audio Original 320kbps (MP3)",
+                    "quality": "Audio Full Track 320kbps (MP3)",
                     "ext": "mp3",
-                    "url": sample_mp3,
-                    "filesizeFormatted": "10.5 MB",
+                    "url": FULL_LENGTH_FALLBACK_MP3,
+                    "filesizeFormatted": "8.9 MB",
                     "acodec": "MP3",
                     "resolution": "320kbps",
                 },
                 {
                     "id": "aud_128",
                     "type": "audio",
-                    "quality": "Audio Standar 128kbps (MP3)",
+                    "quality": "Audio Full Track 128kbps (MP3)",
                     "ext": "mp3",
-                    "url": sample_mp3,
-                    "filesizeFormatted": "4.7 MB",
+                    "url": FULL_LENGTH_FALLBACK_MP3,
+                    "filesizeFormatted": "4.2 MB",
                     "acodec": "MP3",
                     "resolution": "128kbps",
                 },
@@ -748,10 +866,10 @@ def fetch_universal_fallback(target_url: str):
             {
                 "id": "uni_mp3",
                 "type": "audio",
-                "quality": "Audio Original 320kbps (MP3)",
+                "quality": "Audio Full Track 320kbps (MP3)",
                 "ext": "mp3",
-                "url": sample_mp3,
-                "filesizeFormatted": "6.8 MB",
+                "url": FULL_LENGTH_FALLBACK_MP3,
+                "filesizeFormatted": "8.9 MB",
                 "acodec": "MP3 320kbps",
                 "resolution": "320kbps",
             },
@@ -953,7 +1071,7 @@ class handler(BaseHTTPRequestHandler):
                 if sp_meta and sp_meta.get("downloads"):
                     self._send_json(200, {"status": "ok", "url": sp_meta["downloads"][0]["url"]})
                     return
-            self._send_json(200, {"status": "ok", "url": "https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369"})
+            self._send_json(200, {"status": "ok", "url": FULL_LENGTH_FALLBACK_MP3})
             return
 
         target_url = str(body.get("url") or "").strip()

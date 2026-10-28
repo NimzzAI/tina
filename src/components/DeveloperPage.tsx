@@ -232,11 +232,12 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({
           </div>
         </div>
 
-        {/* Identity Split: Avatar + Bio + Primary Actions */}
+        {/* Identity Split: Avatar Overlaps Banner Border, Name & Actions Sit Cleanly Below Banner */}
         <div className="px-5 sm:px-8 pb-7">
-          <div className="relative -mt-12 sm:-mt-14 mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-            <div className="flex items-end gap-4">
-              <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-xl border-4 border-white dark:border-surface bg-neutral-900 overflow-hidden shrink-0 shadow-md">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-6 border-b border-neutral-200 dark:border-neutral-800">
+            <div className="flex flex-col sm:flex-row sm:items-start gap-4 sm:gap-5">
+              {/* Only the Avatar overlaps the banner border */}
+              <div className="relative z-10 -mt-12 sm:-mt-14 w-24 h-24 sm:w-28 sm:h-28 rounded-xl border-4 border-white dark:border-surface bg-neutral-900 overflow-hidden shrink-0 shadow-md">
                 {!avatarError ? (
                   <img
                     src="/avatar.jpg"
@@ -252,28 +253,32 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({
                 )}
               </div>
 
-              <div className="pb-1 space-y-1">
-                <div className="flex items-center gap-2">
-                  <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-neutral-950 dark:text-white">
+              {/* Developer Name & Role — Always positioned cleanly below the banner */}
+              <div className="pt-1 sm:pt-3.5 space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-neutral-950 dark:text-white leading-none">
                     Nimzz
                   </h1>
                   <i
-                    className="fa-solid fa-circle-check text-accent text-sm"
+                    className="fa-solid fa-circle-check text-neutral-950 dark:text-white text-sm"
                     title="Pengembang Resmi Tina Downloader"
                   />
+                  <span className="px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-[10px] font-mono font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+                    Lead Architect
+                  </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-mono text-neutral-500 dark:text-neutral-400">
-                  <span>@NimzzAi</span>
+                  <span className="font-semibold text-neutral-800 dark:text-neutral-200">@NimzzAi</span>
                   <span aria-hidden="true">·</span>
-                  <span>Full-Stack Engineer & Creator</span>
+                  <span>Full-Stack Systems Engineer & Creator</span>
                   <span aria-hidden="true">·</span>
                   <span>Indonesia</span>
                 </div>
               </div>
             </div>
 
-            {/* Primary Contact & Repo Actions */}
-            <div className="flex flex-wrap items-center gap-2">
+            {/* Primary Contact & Repo Actions — Positioned cleanly below banner */}
+            <div className="flex flex-wrap items-center gap-2 sm:pt-3.5">
               <a
                 href="https://github.com/NimzzAi"
                 target="_blank"
@@ -287,7 +292,7 @@ export const DeveloperPage: React.FC<DeveloperPageProps> = ({
                 href="https://whatsapp.com/channel/0029VbBhZWdGJP8HlbGaE63Q"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="px-4 py-2 text-xs font-bold bg-accent text-accent-fg hover:bg-accent-hover rounded-lg transition-colors whitespace-nowrap shrink-0"
+                className="px-4 py-2 text-xs font-bold border border-neutral-300 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-900 hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-950 dark:text-white rounded-lg transition-colors whitespace-nowrap shrink-0"
               >
                 <i className="fa-brands fa-whatsapp mr-1.5" />
                 Saluran Resmi

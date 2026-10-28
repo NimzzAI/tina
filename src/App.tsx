@@ -312,6 +312,9 @@ export default function App() {
     }
   });
   const [historySearch, setHistorySearch] = useState<string>('');
+  const [historyCategoryFilter, setHistoryCategoryFilter] = useState<'all' | 'video' | 'audio' | 'image'>('all');
+  const [historySort, setHistorySort] = useState<'newest' | 'oldest' | 'title'>('newest');
+  const [copiedHistoryId, setCopiedHistoryId] = useState<string | null>(null);
   const [allSites, setAllSites] = useState<SupportedSiteItem[]>(INITIAL_ALL_SUPPORTED_SITES);
   const [totalExtractors, setTotalExtractors] = useState<number>(
     INITIAL_ALL_SUPPORTED_SITES.length || 1615
@@ -516,8 +519,8 @@ export default function App() {
         thumbnail: extractedData.thumbnail || '',
         platform: extractedData.platform || 'WEB',
         author: extractedData.author || 'Kreator',
-        duration: extractedData.durationString || '--:--',
-        quality: extractedData.downloads?.[0]?.quality || 'HD',
+        duration: extractedData.duration || extractedData.durationString || '--:--',
+        quality: extractedData.resolution || extractedData.downloads?.[0]?.quality || 'HD',
         createdAt: new Date().toISOString(),
         metadata: extractedData,
       };
@@ -750,17 +753,74 @@ export default function App() {
     }
   };
 
+  const classifyHistoryItemType = useCallback((item: HistoryItem): 'video' | 'audio' | 'image' => {
+    const plat = (item.platform || '').toLowerCase();
+    const qual = (item.quality || '').toLowerCase();
+    const firstType = item.metadata?.downloads?.[0]?.type;
+    if (
+      ['spotify', 'soundcloud', 'applemusic', 'bandcamp'].includes(plat) ||
+      firstType === 'audio' ||
+      qual.includes('kbps') ||
+      qual.includes('mp3') ||
+      qual.includes('audio')
+    ) {
+      return 'audio';
+    }
+    if (
+      ['pixiv', 'pinterest', 'mangadex'].includes(plat) ||
+      (item.metadata?.images && item.metadata.images.length > 0) ||
+      firstType === 'image' ||
+      qual.includes('foto') ||
+      qual.includes('slide')
+    ) {
+      return 'image';
+    }
+    return 'video';
+  }, []);
+
+  const historyStats = useMemo(() => {
+    let video = 0;
+    let audio = 0;
+    let image = 0;
+    for (const item of historyItems) {
+      const t = classifyHistoryItemType(item);
+      if (t === 'audio') audio++;
+      else if (t === 'image') image++;
+      else video++;
+    }
+    return {
+      total: historyItems.length,
+      video,
+      audio,
+      image,
+    };
+  }, [historyItems, classifyHistoryItemType]);
+
   const filteredHistory = useMemo(() => {
-    if (!historySearch.trim()) return historyItems;
-    const q = historySearch.toLowerCase();
-    return historyItems.filter(
-      (item) =>
-        item.title.toLowerCase().includes(q) ||
-        item.author.toLowerCase().includes(q) ||
-        item.platform.toLowerCase().includes(q) ||
-        item.url.toLowerCase().includes(q)
-    );
-  }, [historyItems, historySearch]);
+    let list = [...historyItems];
+    if (historyCategoryFilter !== 'all') {
+      list = list.filter((item) => classifyHistoryItemType(item) === historyCategoryFilter);
+    }
+    if (historySearch.trim()) {
+      const q = historySearch.toLowerCase();
+      list = list.filter(
+        (item) =>
+          item.title.toLowerCase().includes(q) ||
+          item.author.toLowerCase().includes(q) ||
+          item.platform.toLowerCase().includes(q) ||
+          item.url.toLowerCase().includes(q)
+      );
+    }
+    list.sort((a, b) => {
+      if (historySort === 'title') {
+        return a.title.localeCompare(b.title, 'id-ID');
+      }
+      const ta = new Date(a.createdAt).getTime() || 0;
+      const tb = new Date(b.createdAt).getTime() || 0;
+      return historySort === 'oldest' ? ta - tb : tb - ta;
+    });
+    return list;
+  }, [historyItems, historyCategoryFilter, historySearch, historySort, classifyHistoryItemType]);
 
   const handleDeleteHistoryItem = async (id: string) => {
     try {
@@ -782,6 +842,39 @@ export default function App() {
       });
       setHistoryItems([]);
       setStatusNotice('Seluruh riwayat unduhan telah dibersihkan.');
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleExportHistoryJson = () => {
+    if (historyItems.length === 0) return;
+    const payload = JSON.stringify(
+      {
+        exportedAt: new Date().toISOString(),
+        totalItems: historyItems.length,
+        items: historyItems,
+      },
+      null,
+      2
+    );
+    const blob = new Blob([payload], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `tina_history_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setStatusNotice(`Berhasil mengekspor ${historyItems.length} riwayat ke berkas JSON.`);
+  };
+
+  const handleCopyHistoryUrl = async (id: string, targetUrl: string) => {
+    try {
+      await navigator.clipboard.writeText(targetUrl);
+      setCopiedHistoryId(id);
+      setTimeout(() => setCopiedHistoryId((prev) => (prev === id ? null : prev)), 1800);
     } catch {
       // ignore
     }
@@ -1458,6 +1551,7 @@ export default function App() {
                               author={mediaResult.author}
                               thumbnail={mediaResult.thumbnail}
                               webpageUrl={mediaResult.webpageUrl}
+                              durationHint={mediaResult.duration}
                               onDownload={(s) => handleDownloadStream(s)}
                               buildStreamUrl={buildProxyStreamUrl}
                             />
@@ -1486,6 +1580,7 @@ export default function App() {
                               title={mediaResult.title}
                               author={mediaResult.author}
                               webpageUrl={mediaResult.webpageUrl}
+                              durationHint={mediaResult.duration}
                               compact
                               onDownload={(s) => handleDownloadStream(s)}
                               buildStreamUrl={buildProxyStreamUrl}
@@ -2022,7 +2117,7 @@ export default function App() {
           )}
 
           {/* =========================================================
-              VIEW 2: RIWAYAT UNDUHAN
+              VIEW 2: RIWAYAT UNDUHAN (REMADE ARCHIVE & PLAYBACK STUDIO)
              ========================================================= */}
           {activeTab === 'history' && (
             <motion.div
@@ -2033,120 +2128,313 @@ export default function App() {
               transition={{ duration: 0.18 }}
               className="space-y-6"
             >
-              <div className="flex flex-wrap items-end justify-between gap-4 border-b border-neutral-200 dark:border-neutral-800 pb-4">
-                <div>
-                  <h1 className="text-xl font-bold text-neutral-950 dark:text-white">
-                    Riwayat Unduhan
-                  </h1>
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                    Daftar media yang pernah Anda cari dan unduh di perangkat ini.
-                  </p>
+              {/* 1. Archive Header & 4-Column Summary Ledger */}
+              <section className="bg-white dark:bg-surface border border-neutral-200 dark:border-neutral-800 rounded-xl overflow-hidden">
+                <div className="p-6 border-b border-neutral-200 dark:border-neutral-800 flex flex-wrap items-start justify-between gap-4">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-[11px] font-mono uppercase tracking-wider text-neutral-400">
+                      <span className="w-2 h-2 rounded-xs bg-neutral-950 dark:bg-white inline-block" />
+                      <span>ARCHIVE & PLAYBACK LEDGER</span>
+                    </div>
+                    <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-neutral-950 dark:text-white">
+                      Riwayat Unduhan & Pustaka Media
+                    </h1>
+                    <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 max-w-2xl">
+                      Seluruh tautan video, lagu penuh, dan galeri foto yang pernah Anda ekstrak tersimpan otomatis. Putar ulang di V10 Media Player atau unduh kembali kapan saja tanpa antre.
+                    </p>
+                  </div>
+
+                  {historyItems.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleExportHistoryJson}
+                        className="px-3.5 py-2 text-xs font-bold border border-neutral-300 dark:border-neutral-700 bg-paper dark:bg-paper hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-900 dark:text-neutral-100 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <i className="fa-solid fa-file-export mr-1.5" />
+                        Ekspor JSON
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleClearAllHistory}
+                        className="px-3.5 py-2 text-xs font-bold bg-neutral-950 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <i className="fa-solid fa-trash-can mr-1.5" />
+                        Bersihkan Semua
+                      </button>
+                    </div>
+                  )}
                 </div>
 
-                {historyItems.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleClearAllHistory}
-                    className="px-3.5 py-2 text-xs font-bold border border-neutral-300 dark:border-neutral-800 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-900 transition-colors cursor-pointer"
+                {/* 4-Column Metrics Ledger */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-neutral-200 dark:divide-neutral-800 bg-paper dark:bg-paper">
+                  <div className="p-4">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-neutral-400">
+                      TOTAL RIWAYAT
+                    </div>
+                    <div className="text-lg font-extrabold font-mono tabular-nums text-neutral-950 dark:text-white mt-0.5">
+                      {historyStats.total}
+                    </div>
+                  </div>
+                  <div className="p-4">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-neutral-400">
+                      VIDEO & REELS
+                    </div>
+                    <div className="text-lg font-extrabold font-mono tabular-nums text-neutral-950 dark:text-white mt-0.5">
+                      {historyStats.video}
+                    </div>
+                  </div>
+                  <div className="p-4">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-neutral-400">
+                      MUSIK & AUDIO MP3
+                    </div>
+                    <div className="text-lg font-extrabold font-mono tabular-nums text-neutral-950 dark:text-white mt-0.5">
+                      {historyStats.audio}
+                    </div>
+                  </div>
+                  <div className="p-4">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-neutral-400">
+                      GALERI FOTO & SLIDE
+                    </div>
+                    <div className="text-lg font-extrabold font-mono tabular-nums text-neutral-950 dark:text-white mt-0.5">
+                      {historyStats.image}
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* 2. Filter, Search & Sort Controls */}
+              <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-1 p-1 bg-white dark:bg-surface border border-neutral-200 dark:border-neutral-800 rounded-xl">
+                  {(
+                    [
+                      ['all', `Semua (${historyStats.total})`, 'fa-solid fa-layer-group'],
+                      ['video', `Video (${historyStats.video})`, 'fa-solid fa-video'],
+                      ['audio', `Musik (${historyStats.audio})`, 'fa-solid fa-music'],
+                      ['image', `Foto (${historyStats.image})`, 'fa-regular fa-images'],
+                    ] as ['all' | 'video' | 'audio' | 'image', string, string][]
+                  ).map(([id, label, icon]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setHistoryCategoryFilter(id)}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
+                        historyCategoryFilter === id
+                          ? 'bg-neutral-950 text-white dark:bg-white dark:text-neutral-950'
+                          : 'text-neutral-500 hover:text-neutral-950 dark:hover:text-white'
+                      }`}
+                    >
+                      <i className={`${icon} mr-1.5 text-[11px]`} />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex flex-1 items-center gap-2">
+                  <div className="relative flex-1">
+                    <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 text-xs" />
+                    <input
+                      type="text"
+                      value={historySearch}
+                      onChange={(e) => setHistorySearch(e.target.value)}
+                      placeholder="Cari judul media, kreator, platform, atau URL..."
+                      className="w-full pl-9 pr-9 py-2 text-xs sm:text-sm bg-white dark:bg-surface border border-neutral-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:border-neutral-950 dark:focus:border-neutral-300"
+                    />
+                    {historySearch && (
+                      <button
+                        type="button"
+                        onClick={() => setHistorySearch('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-950 dark:hover:text-white cursor-pointer"
+                      >
+                        <i className="fa-solid fa-xmark text-xs" />
+                      </button>
+                    )}
+                  </div>
+
+                  <select
+                    value={historySort}
+                    onChange={(e) => setHistorySort(e.target.value as 'newest' | 'oldest' | 'title')}
+                    aria-label="Urutkan Riwayat"
+                    className="px-3 py-2 text-xs font-bold bg-white dark:bg-surface border border-neutral-200 dark:border-neutral-800 rounded-xl text-neutral-800 dark:text-neutral-200 focus:outline-none cursor-pointer"
                   >
-                    <i className="fa-solid fa-trash-can mr-1.5" />
-                    Bersihkan Semua
-                  </button>
-                )}
+                    <option value="newest">Terbaru</option>
+                    <option value="oldest">Terlama</option>
+                    <option value="title">Judul A–Z</option>
+                  </select>
+                </div>
               </div>
 
-              <div className="relative">
-                <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 text-xs" />
-                <input
-                  type="text"
-                  value={historySearch}
-                  onChange={(e) => setHistorySearch(e.target.value)}
-                  placeholder="Cari judul media, kreator, atau platform..."
-                  className="w-full pl-9 pr-4 py-2.5 text-xs sm:text-sm bg-white dark:bg-surface border border-neutral-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:border-neutral-950 dark:focus:border-neutral-300"
-                />
-              </div>
-
+              {/* 3. History Items Table / Empty State */}
               {filteredHistory.length === 0 ? (
-                <div className="py-16 text-center bg-white dark:bg-surface border border-neutral-200 dark:border-neutral-800 rounded-xl">
-                  <i className="fa-solid fa-clock-rotate-left text-xl text-neutral-400 mb-2" />
-                  <p className="text-sm font-bold text-neutral-900 dark:text-neutral-100">
-                    Belum Ada Riwayat Unduhan
-                  </p>
-                  <p className="text-xs text-neutral-500 mt-1 mb-4">
-                    Setiap tautan media yang Anda unduh akan tersimpan secara otomatis di sini.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('downloader')}
-                    className="px-4 py-2 text-xs font-bold bg-neutral-950 text-white dark:bg-white dark:text-neutral-950 rounded-lg cursor-pointer"
-                  >
-                    Mulai Unduh Media
-                  </button>
+                <div className="py-16 px-4 text-center bg-white dark:bg-surface border border-neutral-200 dark:border-neutral-800 rounded-xl space-y-3">
+                  <div className="w-12 h-12 rounded-xl bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 mx-auto flex items-center justify-center text-neutral-400">
+                    <i className="fa-solid fa-clock-rotate-left text-lg" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-bold text-neutral-950 dark:text-white">
+                      {historyItems.length === 0
+                        ? 'Belum Ada Riwayat Unduhan'
+                        : 'Tidak Ada Media yang Sesuai Filter'}
+                    </p>
+                    <p className="text-xs text-neutral-500 max-w-md mx-auto">
+                      {historyItems.length === 0
+                        ? 'Setiap tautan video, lagu Spotify/SoundCloud, atau galeri foto yang Anda ekstrak akan tersimpan otomatis di sini.'
+                        : 'Coba ubah kata kunci pencarian atau pilih kategori "Semua" untuk melihat seluruh arsip.'}
+                    </p>
+                  </div>
+                  <div className="pt-1 flex items-center justify-center gap-2">
+                    {historyItems.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHistorySearch('');
+                          setHistoryCategoryFilter('all');
+                        }}
+                        className="px-4 py-2 text-xs font-bold bg-neutral-950 text-white dark:bg-white dark:text-neutral-950 rounded-lg cursor-pointer"
+                      >
+                        Reset Filter Pencarian
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('downloader')}
+                        className="px-4 py-2 text-xs font-bold bg-neutral-950 text-white dark:bg-white dark:text-neutral-950 rounded-lg cursor-pointer"
+                      >
+                        <i className="fa-solid fa-arrow-down mr-1.5" />
+                        Mulai Ekstrak Media
+                      </button>
+                    )}
+                  </div>
                 </div>
               ) : (
-                <div className="bg-white dark:bg-surface border border-neutral-200 dark:border-neutral-800 rounded-xl overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-neutral-200 dark:border-neutral-800 bg-paper dark:bg-paper text-[11px] font-semibold uppercase text-neutral-500">
-                        <th className="py-3 px-4">Media & Kreator</th>
-                        <th className="py-3 px-4">Platform</th>
-                        <th className="py-3 px-4">Kualitas · Durasi</th>
-                        <th className="py-3 px-4 text-right">Waktu</th>
-                        <th className="py-3 px-4 text-right">Aksi</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800 text-xs">
-                      {filteredHistory.map((item) => (
-                        <tr key={item.id} className="hover:bg-neutral-50 dark:hover:bg-neutral-900/50">
-                          <td className="py-3 px-4">
-                            <div className="font-bold text-neutral-950 dark:text-neutral-100 line-clamp-1">
-                              {item.title}
-                            </div>
-                            <div className="text-neutral-500">{item.author}</div>
-                          </td>
-                          <td className="py-3 px-4 uppercase font-bold text-neutral-800 dark:text-neutral-200">
-                            {item.platform}
-                          </td>
-                          <td className="py-3 px-4 text-neutral-500">
-                            {item.quality} · {item.duration}
-                          </td>
-                          <td className="py-3 px-4 text-right text-neutral-500 whitespace-nowrap">
-                            {new Date(item.createdAt).toLocaleString('id-ID', {
-                              day: '2-digit',
-                              month: 'short',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </td>
-                          <td className="py-3 px-4 text-right whitespace-nowrap">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setUrlInput(item.url);
-                                setActiveTab('downloader');
-                                if (item.metadata) {
-                                  setMediaResult(item.metadata);
-                                } else {
-                                  handleExtract(item.url);
-                                }
-                              }}
-                              className="px-2.5 py-1 text-xs font-bold bg-neutral-950 text-white dark:bg-white dark:text-neutral-950 rounded-md mr-2 cursor-pointer"
-                            >
-                              Buka
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteHistoryItem(item.id)}
-                              className="text-neutral-400 hover:text-neutral-950 dark:hover:text-white cursor-pointer"
-                              title="Hapus"
-                            >
-                              <i className="fa-solid fa-trash" />
-                            </button>
-                          </td>
+                <div className="bg-white dark:bg-surface border border-neutral-200 dark:border-neutral-800 rounded-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-neutral-200 dark:border-neutral-800 bg-paper dark:bg-paper text-[11px] font-mono uppercase text-neutral-500">
+                          <th className="py-3 px-4">Media & Kreator</th>
+                          <th className="py-3 px-4">Platform · Tipe</th>
+                          <th className="py-3 px-4">Kualitas · Durasi</th>
+                          <th className="py-3 px-4 text-right">Waktu Simpan</th>
+                          <th className="py-3 px-4 text-right">Aksi Cepat</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800 text-xs">
+                        {filteredHistory.map((item) => {
+                          const itemType = classifyHistoryItemType(item);
+                          const isCopied = copiedHistoryId === item.id;
+                          return (
+                            <tr
+                              key={item.id}
+                              className="hover:bg-neutral-50 dark:hover:bg-neutral-900/50 transition-colors"
+                            >
+                              <td className="py-3.5 px-4 max-w-xs sm:max-w-md">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-12 h-12 rounded-lg overflow-hidden bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shrink-0 flex items-center justify-center">
+                                    {item.thumbnail ? (
+                                      <img
+                                        src={buildProxyStreamUrl(item.thumbnail)}
+                                        alt={item.title}
+                                        loading="lazy"
+                                        referrerPolicy="no-referrer"
+                                        className="w-full h-full object-cover"
+                                      />
+                                    ) : (
+                                      <i
+                                        className={`fa-solid ${
+                                          itemType === 'audio'
+                                            ? 'fa-music'
+                                            : itemType === 'image'
+                                              ? 'fa-images'
+                                              : 'fa-film'
+                                        } text-neutral-400 text-xs`}
+                                      />
+                                    )}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="font-bold text-neutral-950 dark:text-neutral-100 truncate">
+                                      {item.title}
+                                    </div>
+                                    <div className="text-neutral-500 dark:text-neutral-400 truncate mt-0.5">
+                                      {item.author}
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="py-3.5 px-4 whitespace-nowrap">
+                                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 font-mono text-[11px] font-bold uppercase text-neutral-800 dark:text-neutral-200">
+                                  <i
+                                    className={`fa-solid ${
+                                      itemType === 'audio'
+                                        ? 'fa-headphones'
+                                        : itemType === 'image'
+                                          ? 'fa-image'
+                                          : 'fa-video'
+                                    } text-[10px] text-neutral-500`}
+                                  />
+                                  <span>{item.platform}</span>
+                                </div>
+                              </td>
+                              <td className="py-3.5 px-4 font-mono tabular-nums text-neutral-600 dark:text-neutral-300 whitespace-nowrap">
+                                <span className="font-bold text-neutral-900 dark:text-white">
+                                  {item.quality || 'Original HD'}
+                                </span>
+                                {item.duration && item.duration !== '-' && (
+                                  <span className="text-neutral-400"> · {item.duration}</span>
+                                )}
+                              </td>
+                              <td className="py-3.5 px-4 text-right font-mono tabular-nums text-neutral-500 whitespace-nowrap">
+                                {new Date(item.createdAt).toLocaleString('id-ID', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </td>
+                              <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                                <div className="inline-flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setUrlInput(item.url);
+                                      setActiveTab('downloader');
+                                      if (item.metadata) {
+                                        setMediaResult(item.metadata);
+                                      } else {
+                                        handleExtract(item.url);
+                                      }
+                                    }}
+                                    className="px-3 py-1.5 text-xs font-bold bg-neutral-950 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200 rounded-lg transition-colors cursor-pointer"
+                                  >
+                                    <i className="fa-solid fa-play mr-1.5 text-[10px]" />
+                                    Putar di Studio
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyHistoryUrl(item.id, item.url)}
+                                    title="Salin Tautan Asli"
+                                    className="px-2.5 py-1.5 text-xs font-semibold border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-300 rounded-lg transition-colors cursor-pointer"
+                                  >
+                                    <i className={`fa-solid ${isCopied ? 'fa-check' : 'fa-link'}`} />
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteHistoryItem(item.id)}
+                                    className="w-8 h-8 rounded-lg border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-400 hover:text-neutral-950 dark:hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+                                    title="Hapus dari Riwayat"
+                                  >
+                                    <i className="fa-solid fa-trash text-xs" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </motion.div>

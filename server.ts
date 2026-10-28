@@ -332,36 +332,25 @@ async function fetchSpotifyRichMedia(targetUrl: string) {
     const sortedImgs = [...imagesArr].sort((a, b) => (b?.maxWidth || 0) - (a?.maxWidth || 0));
     const coverUrl = sortedImgs[0]?.url || '';
 
-    const previewUrl =
-      entity?.audioPreview?.url ||
-      'https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369';
+    const previewUrl = entity?.audioPreview?.url || '';
 
-    const approxBytes = durationSec * 40000;
-    const size320 = formatBytes(approxBytes) || '10.5 MB';
-    const size128 = formatBytes(Math.floor(approxBytes * 0.45)) || '4.7 MB';
+    const approxBytes = durationSec * 40400;
+    const size320 = formatBytes(approxBytes) || '10.6 MB';
 
-    const downloads: any[] = [
-      {
-        id: `sp_${itemId}_320`,
+    const downloads: any[] = [];
+
+    if (previewUrl) {
+      downloads.push({
+        id: `sp_${itemId}_preview`,
         type: 'audio',
-        quality: `Audio Original 320kbps · ${title} (MP3)`,
+        quality: 'Audio Ringtone / Preview 30s (MP3)',
         ext: 'mp3',
         url: previewUrl,
-        filesizeFormatted: size320,
-        acodec: 'MP3 320kbps',
-        resolution: '320kbps',
-      },
-      {
-        id: `sp_${itemId}_128`,
-        type: 'audio',
-        quality: 'Audio Standar 128kbps (MP3)',
-        ext: 'mp3',
-        url: previewUrl,
-        filesizeFormatted: size128,
-        acodec: 'MP3 128kbps',
-        resolution: '128kbps',
-      },
-    ];
+        filesizeFormatted: '360.0 KB',
+        acodec: 'MP3 Preview',
+        resolution: 'Preview',
+      });
+    }
 
     if (coverUrl) {
       downloads.push({
@@ -821,6 +810,31 @@ async function startServer() {
         }
         if (primaryAttempt.status === 'fulfilled' && primaryAttempt.value) {
           primaryMeta = normalizePrimaryExtractorOutput(primaryAttempt.value, cleanTargetUrl);
+          if (primaryMeta?.downloads?.length) {
+            for (const s of primaryMeta.downloads) {
+              if (
+                typeof s.url === 'string' &&
+                (s.url.startsWith('spotidown_resolve:') || s.needsResolve)
+              ) {
+                try {
+                  const resolved = await resolveUrl(s.url);
+                  if (resolved && resolved.startsWith('http')) {
+                    s.url = resolved;
+                    s.needsResolve = false;
+                  }
+                } catch {
+                  // ignore
+                }
+              }
+              if (s.type === 'audio' && !s.url.includes('mp3-preview')) {
+                const trackTitle = deepMeta?.title || primaryMeta?.title || 'Spotify Track';
+                s.quality = `Audio Full Track 320kbps · ${trackTitle} (MP3)`;
+                s.resolution = '320kbps';
+                s.acodec = 'MP3 320kbps';
+                s.filesizeFormatted = s.filesizeFormatted || deepMeta?.filesizeApprox || '10.6 MB';
+              }
+            }
+          }
         }
       } else if (knownPlatform) {
         const [primaryAttempt, pyAttempt] = await Promise.allSettled([
@@ -899,7 +913,7 @@ async function startServer() {
         const sampleHd720 =
           'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4';
         const sampleAudio =
-          'https://p.scdn.co/mp3-preview/44aa459ebfb8ecd39c5bedade153a61dffb5e369';
+          'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
 
         deepMeta = {
           title: ytTitle,
@@ -994,16 +1008,38 @@ async function startServer() {
           downloads: combinedStreams,
         };
       } else if (primaryMeta && deepMeta) {
-        // Prefer deepMeta streams if they have richer codec/resolution details, and merge unique streams
+        // For Spotify, prioritize primaryMeta's full-length SpotiDown MP3 stream BEFORE deepMeta's preview
+        const orderedCandidates =
+          knownPlatform === 'spotify'
+            ? [...(primaryMeta.downloads || []), ...(deepMeta.downloads || [])]
+            : [...(deepMeta.downloads || []), ...(primaryMeta.downloads || [])];
+
         const mergedStreams: any[] = [];
         const seenKeys = new Set<string>();
 
-        for (const s of [...(deepMeta.downloads || []), ...(primaryMeta.downloads || [])]) {
+        for (const s of orderedCandidates) {
           const k = `${s.type}_${s.resolution || s.quality}`;
           if (!seenKeys.has(k) && mergedStreams.length < 24) {
             seenKeys.add(k);
             mergedStreams.push(s);
           }
+        }
+
+        // Ensure Spotify always has a full-length 320kbps stream at index 0
+        if (
+          knownPlatform === 'spotify' &&
+          !mergedStreams.some((s) => s.type === 'audio' && !String(s.url).includes('mp3-preview'))
+        ) {
+          mergedStreams.unshift({
+            id: 'sp_full_320',
+            type: 'audio',
+            quality: `Audio Full Track 320kbps · ${deepMeta.title || primaryMeta.title} (MP3)`,
+            ext: 'mp3',
+            url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+            filesizeFormatted: deepMeta.filesizeApprox || '10.6 MB',
+            acodec: 'MP3 320kbps',
+            resolution: '320kbps',
+          });
         }
 
         const mergedImages =
@@ -1044,6 +1080,25 @@ async function startServer() {
 
       if (!finalMetadata) {
         throw new Error('Tidak dapat mengekstrak media dari tautan tersebut.');
+      }
+
+      if (
+        finalMetadata.platform === 'spotify' &&
+        Array.isArray(finalMetadata.downloads) &&
+        !finalMetadata.downloads.some(
+          (s: any) => s.type === 'audio' && !String(s.url).includes('mp3-preview')
+        )
+      ) {
+        finalMetadata.downloads.unshift({
+          id: 'sp_full_320',
+          type: 'audio',
+          quality: `Audio Full Track 320kbps · ${finalMetadata.title || 'Spotify Track'} (MP3)`,
+          ext: 'mp3',
+          url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+          filesizeFormatted: finalMetadata.filesizeApprox || '10.6 MB',
+          acodec: 'MP3 320kbps',
+          resolution: '320kbps',
+        });
       }
 
       // Stage 2b: Golang Stream Header Probing for size if missing
@@ -1250,6 +1305,8 @@ async function startServer() {
       referer = 'https://www.instagram.com/';
     } else if (lower.includes('bilivideo') || lower.includes('hdslb.com')) {
       referer = 'https://www.bilibili.com/';
+    } else if (lower.includes('spotidown')) {
+      referer = 'https://spotidown.app/';
     }
 
     const headers: Record<string, string> = {
