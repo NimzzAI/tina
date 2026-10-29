@@ -86,6 +86,10 @@ def get_upstream_referer(url: str) -> str:
         return "https://spotidown.app/"
     if "scdn.co" in lower or "spotify" in lower:
         return "https://open.spotify.com/"
+    if "gammacloud.net" in lower:
+        return "https://ytmp3.gl/"
+    if "cnvmp3" in lower:
+        return "https://cnvmp3.com/v55"
     try:
         p = urllib.parse.urlparse(url)
         return f"{p.scheme}://{p.netloc}/"
@@ -361,6 +365,119 @@ def fetch_spotidown_full_mp3(target_url: str):
         return None
 
 
+def resolve_gammacloud_youtube(video_id: str, fmt: str = "mp3"):
+    """Resolves real YouTube MP3 or MP4 stream via CnvMP3 cache or GammaCloud converter."""
+    fmt_clean = "mp4" if fmt.lower() == "mp4" else "mp3"
+    # 1. Fast check on CnvMP3 pre-cached database
+    try:
+        cnv_payload = json.dumps(
+            {
+                "youtube_id": video_id,
+                "quality": 0 if fmt_clean == "mp3" else 720,
+                "formatValue": 1 if fmt_clean == "mp3" else 0,
+            }
+        ).encode("utf-8")
+        cnv_req = urllib.request.Request(
+            "https://cnvmp3.com/check_database.php",
+            data=cnv_payload,
+            headers={
+                "User-Agent": CHROME_UA,
+                "Content-Type": "application/json",
+                "Origin": "https://cnvmp3.com",
+                "Referer": "https://cnvmp3.com/v55",
+            },
+        )
+        with urllib.request.urlopen(cnv_req, timeout=4) as cnv_resp:
+            cnv_json = json.loads(cnv_resp.read().decode("utf-8", errors="ignore"))
+        server_path = (cnv_json.get("data") or {}).get("server_path")
+        if not cnv_json.get("error") and isinstance(server_path, str) and server_path.startswith("http"):
+            return server_path
+    except Exception:
+        pass
+
+    # 2. GammaCloud Direct Converter (ytmp3.as -> ytmp3.gl -> gamma.gammacloud.net)
+    try:
+        req0 = urllib.request.Request("https://ytmp3.as/", headers={"User-Agent": CHROME_UA})
+        with urllib.request.urlopen(req0, timeout=7) as r0:
+            html = r0.read().decode("utf-8", errors="ignore")
+            final_origin = r0.url.rstrip("/")
+
+        m_key = re.search(r"var\s+apiKey\s*=\s*['\"]([^'\"]+)['\"]", html)
+        if not m_key:
+            return None
+        api_key = m_key.group(1)
+
+        hdrs = {
+            "User-Agent": CHROME_UA,
+            "Origin": final_origin,
+            "Referer": final_origin + "/",
+            "Accept": "application/json, text/plain, */*",
+        }
+        now_ms = int(time.time() * 1000)
+        auth_u = f"https://gamma.gammacloud.net/api/v1/auth?api_key={urllib.parse.quote(api_key)}&_={now_ms}"
+        with urllib.request.urlopen(urllib.request.Request(auth_u, headers=hdrs), timeout=7) as r_auth:
+            auth = json.loads(r_auth.read().decode("utf-8", errors="ignore"))
+        if not auth.get("key"):
+            return None
+
+        hdrs_auth = {**hdrs, "Authorization": "Bearer " + auth["key"]}
+        init_u = f"https://gamma.gammacloud.net/api/v1/init?_={int(time.time() * 1000)}"
+        with urllib.request.urlopen(urllib.request.Request(init_u, headers=hdrs_auth), timeout=7) as r_init:
+            init = json.loads(r_init.read().decode("utf-8", errors="ignore"))
+        if not init.get("convertURL"):
+            return None
+
+        conv_base = str(init["convertURL"]).split("&v=")[0]
+        conv_u = f"{conv_base}&v={urllib.parse.quote(video_id)}&f={fmt_clean}&_={int(time.time() * 1000)}"
+        with urllib.request.urlopen(urllib.request.Request(conv_u, headers=hdrs), timeout=8) as r_conv:
+            conv = json.loads(r_conv.read().decode("utf-8", errors="ignore"))
+
+        if conv.get("redirect") == 1 and conv.get("redirectURL"):
+            redir_base = str(conv["redirectURL"]).split("&v=")[0]
+            conv_u2 = f"{redir_base}&v={urllib.parse.quote(video_id)}&f={fmt_clean}&_={int(time.time() * 1000)}"
+            with urllib.request.urlopen(urllib.request.Request(conv_u2, headers=hdrs), timeout=8) as r_conv2:
+                conv = json.loads(r_conv2.read().decode("utf-8", errors="ignore"))
+
+        if not conv or conv.get("error"):
+            return None
+
+        dl_u = conv.get("downloadURL")
+        prog_u = conv.get("progressURL")
+
+        if prog_u:
+            for _ in range(12):
+                with urllib.request.urlopen(
+                    urllib.request.Request(f"{prog_u}&_={int(time.time() * 1000)}", headers=hdrs),
+                    timeout=7,
+                ) as r_prog:
+                    p = json.loads(r_prog.read().decode("utf-8", errors="ignore"))
+                if p.get("error", 0) > 0 or p.get("progress", 0) >= 3:
+                    break
+                time.sleep(1.2)
+
+        return dl_u if isinstance(dl_u, str) and dl_u.startswith("http") else None
+    except Exception:
+        return None
+
+
+def search_youtube_video_id(query: str):
+    try:
+        u = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(query)
+        req = urllib.request.Request(
+            u,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=7) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+        m = re.search(r'"videoRenderer":\{"videoId":"([a-zA-Z0-9_-]{11})"', html)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
 def fetch_spotify_rich(target_url: str):
     m = re.search(r"spotify\.com/(?:intl-[a-z-]+/)?(track|episode)/([A-Za-z0-9]+)", target_url, re.I)
     kind = m.group(1).lower() if m else "track"
@@ -417,36 +534,46 @@ def fetch_spotify_rich(target_url: str):
     except Exception:
         pass
 
-    # 2. Resolve Full-Length MP3 Stream via SpotiDown (10.6 MB / Full 04:22 Duration)
+    # 2. Resolve Full-Length MP3 Stream via SpotiDown or YouTube Audio Match
     spoti_full = fetch_spotidown_full_mp3(f"https://open.spotify.com/{kind}/{item_id}")
-    primary_mp3_url = (spoti_full or {}).get("mp3_url") or FULL_LENGTH_FALLBACK_MP3
+    primary_mp3_url = (spoti_full or {}).get("mp3_url")
+    if not primary_mp3_url:
+        yt_match_id = search_youtube_video_id(f"{author} {title} Official Audio")
+        if yt_match_id:
+            primary_mp3_url = resolve_gammacloud_youtube(yt_match_id, "mp3")
+    if not primary_mp3_url:
+        primary_mp3_url = preview_url
 
     approx_bytes = int(duration_sec * 40400)  # ~320kbps full track
     filesize_320 = format_bytes(approx_bytes) or "10.6 MB"
     filesize_128 = format_bytes(int(approx_bytes * 0.45)) or "4.8 MB"
 
-    downloads = [
-        {
-            "id": f"sp_{item_id}_full_320",
-            "type": "audio",
-            "quality": f"Audio Full Track 320kbps · {title} (MP3)",
-            "ext": "mp3",
-            "url": primary_mp3_url,
-            "filesizeFormatted": filesize_320,
-            "acodec": "MP3 320kbps",
-            "resolution": "320kbps",
-        },
-        {
-            "id": f"sp_{item_id}_full_128",
-            "type": "audio",
-            "quality": "Audio Full Track 128kbps (MP3)",
-            "ext": "mp3",
-            "url": primary_mp3_url,
-            "filesizeFormatted": filesize_128,
-            "acodec": "MP3 128kbps",
-            "resolution": "128kbps",
-        },
-    ]
+    downloads = []
+    if primary_mp3_url:
+        downloads.append(
+            {
+                "id": f"sp_{item_id}_full_320",
+                "type": "audio",
+                "quality": f"Audio Full Track 320kbps · {title} (MP3)",
+                "ext": "mp3",
+                "url": primary_mp3_url,
+                "filesizeFormatted": filesize_320,
+                "acodec": "MP3 320kbps",
+                "resolution": "320kbps",
+            }
+        )
+        downloads.append(
+            {
+                "id": f"sp_{item_id}_full_128",
+                "type": "audio",
+                "quality": "Audio Full Track 128kbps (MP3)",
+                "ext": "mp3",
+                "url": primary_mp3_url,
+                "filesizeFormatted": filesize_128,
+                "acodec": "MP3 128kbps",
+                "resolution": "128kbps",
+            }
+        )
 
     if preview_url and preview_url != primary_mp3_url:
         downloads.append(
@@ -508,91 +635,77 @@ def fetch_youtube_rich(target_url: str):
     author = "YouTube Creator"
     author_url = None
     thumb = f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
-    duration_str = "04:12"
+    duration_sec = 0
+    duration_str = ""
     upload_date = time.strftime("%Y-%m-%d")
     view_count = None
     like_count = None
     downloads = []
 
-    # 1. Try Piped Streams API (works cleanly from serverless / datacenter IPs)
-    piped_instances = [
-        f"https://api.piped.private.coffee/streams/{video_id}",
-    ]
-    for api_url in piped_instances:
-        try:
-            req = urllib.request.Request(
-                api_url,
-                headers={"User-Agent": CHROME_UA, "Accept": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                pdata = json.loads(resp.read().decode("utf-8"))
-            if pdata and pdata.get("title"):
-                title = pdata.get("title") or title
-                author = pdata.get("uploader") or author
-                if pdata.get("uploaderUrl"):
-                    author_url = f"https://www.youtube.com{pdata['uploaderUrl']}"
-                if pdata.get("thumbnailUrl"):
-                    thumb = pdata["thumbnailUrl"]
-                if pdata.get("duration"):
-                    duration_str = format_duration(pdata["duration"]) or duration_str
-                if pdata.get("uploadDate"):
-                    upload_date = str(pdata["uploadDate"])[:10]
-                if isinstance(pdata.get("views"), int):
-                    view_count = pdata["views"]
-                if isinstance(pdata.get("likes"), int):
-                    like_count = pdata["likes"]
+    # 1. Try Piped Streams API (includes proxy.piped.private.coffee streams)
+    try:
+        api_url = f"https://api.piped.private.coffee/streams/{video_id}"
+        req = urllib.request.Request(
+            api_url,
+            headers={"User-Agent": CHROME_UA, "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            pdata = json.loads(resp.read().decode("utf-8"))
+        if pdata and pdata.get("title"):
+            title = pdata.get("title") or title
+            author = pdata.get("uploader") or author
+            if pdata.get("uploaderUrl"):
+                author_url = f"https://www.youtube.com{pdata['uploaderUrl']}"
+            if pdata.get("thumbnailUrl"):
+                thumb = pdata["thumbnailUrl"]
+            if pdata.get("duration"):
+                duration_sec = int(pdata["duration"])
+                duration_str = format_duration(duration_sec) or duration_str
+            if pdata.get("uploadDate"):
+                upload_date = str(pdata["uploadDate"])[:10]
+            if isinstance(pdata.get("views"), int):
+                view_count = pdata["views"]
+            if isinstance(pdata.get("likes"), int):
+                like_count = pdata["likes"]
 
-                v_streams = pdata.get("videoStreams") or []
-                progressive = [
-                    s
-                    for s in v_streams
-                    if not s.get("videoOnly")
-                    and s.get("url")
-                    and "proxy.piped.private.coffee" not in s.get("url", "")
-                ]
-                for s in progressive:
-                    res = s.get("quality") or "720p"
-                    fps_val = s.get("fps") or 30
-                    bitrate = s.get("bitrate") or 1200000
-                    dur_s = pdata.get("duration") or 240
-                    est_bytes = int((bitrate / 8) * dur_s)
-                    downloads.append(
-                        {
-                            "id": f"yt_{video_id}_{res}",
-                            "type": "video",
-                            "quality": f"Video {res} {'Full HD' if '1080' in res else 'HD' if '720' in res else 'SD'} (MP4)",
-                            "ext": "mp4",
-                            "url": s["url"],
-                            "filesizeFormatted": format_bytes(est_bytes),
-                            "resolution": res,
-                            "vcodec": "H.264",
-                            "acodec": "AAC",
-                            "fps": fps_val,
-                        }
-                    )
+            v_streams = pdata.get("videoStreams") or []
+            progressive = [s for s in v_streams if not s.get("videoOnly") and s.get("url")]
+            for s in progressive:
+                res = s.get("quality") or "360p"
+                fps_val = s.get("fps") or 30
+                m_clen = re.search(r"[?&]clen=(\d+)", s["url"])
+                est_bytes = int(m_clen.group(1)) if m_clen else int(((s.get("bitrate") or 900000) / 8) * (duration_sec or 240))
+                downloads.append(
+                    {
+                        "id": f"yt_{video_id}_{res}",
+                        "type": "video",
+                        "quality": f"Video {res} {'Full HD' if '1080' in res else 'HD' if '720' in res else 'SD'} (MP4)",
+                        "ext": "mp4",
+                        "url": s["url"],
+                        "filesizeFormatted": format_bytes(est_bytes),
+                        "resolution": res,
+                        "vcodec": "H.264",
+                        "acodec": "AAC",
+                        "fps": fps_val,
+                    }
+                )
 
-                a_streams = pdata.get("audioStreams") or []
-                direct_audio = [
-                    a
-                    for a in a_streams
-                    if a.get("url") and "proxy.piped.private.coffee" not in a.get("url", "")
-                ]
-                for a in direct_audio[:2]:
-                    abr = a.get("quality") or "128kbps"
-                    downloads.append(
-                        {
-                            "id": f"yt_{video_id}_aud_{abr}",
-                            "type": "audio",
-                            "quality": f"Audio Original {abr} (MP3)",
-                            "ext": "mp3",
-                            "url": a["url"],
-                            "acodec": "MP3 / AAC",
-                            "resolution": abr,
-                        }
-                    )
-                break
-        except Exception:
-            pass
+            a_streams = pdata.get("audioStreams") or []
+            for a in [x for x in a_streams if x.get("url")][:2]:
+                abr = a.get("quality") or "128kbps"
+                downloads.append(
+                    {
+                        "id": f"yt_{video_id}_aud_{abr}",
+                        "type": "audio",
+                        "quality": f"Audio Stream {abr} (M4A)",
+                        "ext": "m4a",
+                        "url": a["url"],
+                        "acodec": "AAC",
+                        "resolution": abr,
+                    }
+                )
+    except Exception:
+        pass
 
     # 2. Enrich with YouTube Official oEmbed if title is still generic
     if title == "YouTube Video HD":
@@ -608,57 +721,58 @@ def fetch_youtube_rich(target_url: str):
         except Exception:
             pass
 
-    if not downloads:
-        sample_hd = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-        sample_sd = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4"
-        downloads = [
-            {
-                "id": f"yt_{video_id}_1080p",
-                "type": "video",
-                "quality": "Video 1080p Full HD 60fps (MP4)",
-                "ext": "mp4",
-                "url": sample_hd,
-                "filesizeFormatted": "148.4 MB",
-                "resolution": "1080p",
-                "vcodec": "H.264",
-                "acodec": "AAC",
-                "fps": 60,
-            },
-            {
-                "id": f"yt_{video_id}_720p",
-                "type": "video",
-                "quality": "Video 720p HD (MP4)",
-                "ext": "mp4",
-                "url": sample_hd,
-                "filesizeFormatted": "64.2 MB",
-                "resolution": "720p",
-                "vcodec": "H.264",
-                "acodec": "AAC",
-                "fps": 30,
-            },
-            {
-                "id": f"yt_{video_id}_480p",
-                "type": "video",
-                "quality": "Video 480p SD (MP4)",
-                "ext": "mp4",
-                "url": sample_sd,
-                "filesizeFormatted": "28.5 MB",
-                "resolution": "480p",
-                "vcodec": "H.264",
-                "acodec": "AAC",
-                "fps": 30,
-            },
+    # 3. Resolve direct MP4 via GammaCloud if Piped did not provide video
+    if not any(d.get("type") == "video" for d in downloads):
+        gamma_mp4 = resolve_gammacloud_youtube(video_id, "mp4")
+        if gamma_mp4:
+            downloads.insert(
+                0,
+                {
+                    "id": f"yt_{video_id}_mp4_hd",
+                    "type": "video",
+                    "quality": "Video 720p HD · Direct Stream (MP4)",
+                    "ext": "mp4",
+                    "url": gamma_mp4,
+                    "filesizeFormatted": format_bytes(duration_sec * 180000) if duration_sec else None,
+                    "resolution": "720p",
+                    "vcodec": "H.264",
+                    "acodec": "AAC",
+                    "fps": 30,
+                },
+            )
+
+    # 4. Always resolve real MP3 audio stream for this exact YouTube video via GammaCloud/CnvMP3
+    gamma_mp3 = resolve_gammacloud_youtube(video_id, "mp3")
+    if gamma_mp3:
+        downloads.append(
             {
                 "id": f"yt_{video_id}_mp3",
                 "type": "audio",
-                "quality": "Audio Full Track 320kbps (MP3)",
+                "quality": f"Audio Original · {title[:42]} (MP3)",
                 "ext": "mp3",
-                "url": FULL_LENGTH_FALLBACK_MP3,
-                "filesizeFormatted": "8.9 MB",
+                "url": gamma_mp3,
+                "filesizeFormatted": format_bytes(duration_sec * 16000) if duration_sec else None,
                 "acodec": "MP3 320kbps",
                 "resolution": "320kbps",
-            },
-        ]
+            }
+        )
+    elif any(d.get("type") == "video" for d in downloads) and not any(d.get("type") == "audio" for d in downloads):
+        first_vid = next(d for d in downloads if d.get("type") == "video")
+        downloads.append(
+            {
+                "id": f"yt_{video_id}_aud_muxed",
+                "type": "audio",
+                "quality": f"Audio Original · {title[:42]} (M4A)",
+                "ext": "m4a",
+                "url": first_vid["url"],
+                "filesizeFormatted": first_vid.get("filesizeFormatted"),
+                "acodec": "AAC",
+                "resolution": "192kbps",
+            }
+        )
+
+    if not downloads:
+        return None
 
     return {
         "title": title,
@@ -674,11 +788,11 @@ def fetch_youtube_rich(target_url: str):
         "uploadDate": upload_date,
         "viewCount": view_count,
         "likeCount": like_count,
-        "resolution": "1920x1080 (Full HD)",
+        "resolution": downloads[0].get("resolution") or "720p HD",
         "fps": 30,
         "vcodec": "H.264 (AVC1)",
         "acodec": "AAC / MP3",
-        "filesizeApprox": downloads[0].get("filesizeFormatted") or "42.0 MB",
+        "filesizeApprox": downloads[0].get("filesizeFormatted"),
         "downloads": downloads,
     }
 
@@ -919,7 +1033,36 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _resolve_token_if_needed(self, raw_url: str) -> str:
+        raw_url = (raw_url or "").strip()
+        if raw_url.startswith("http"):
+            return raw_url
+        if raw_url.startswith("youtube_resolve:") or raw_url.startswith("ytmp3gg_resolve:"):
+            parts = re.sub(r"^(youtube_resolve:|ytmp3gg_resolve:)", "", raw_url).split(":::")
+            yt_u = parts[0] if parts else ""
+            fmt_raw = (parts[1] if len(parts) > 1 else "mp3").lower()
+            fmt = "mp3" if ("mp3" in fmt_raw or "audio" in fmt_raw) else "mp4"
+            vid_m = re.search(
+                r"(?:v=|youtu\.be/|shorts/|embed/|live/)([A-Za-z0-9_-]{11})",
+                yt_u,
+            )
+            if vid_m:
+                resolved = resolve_gammacloud_youtube(vid_m.group(1), fmt)
+                if resolved:
+                    return resolved
+        sp_m = re.search(
+            r"spotify\.com/(?:intl-[a-z-]+/)?(track|episode)/([A-Za-z0-9]+)",
+            raw_url,
+            re.I,
+        )
+        if sp_m:
+            sp_meta = fetch_spotify_rich(f"https://open.spotify.com/{sp_m.group(1)}/{sp_m.group(2)}")
+            if sp_meta and sp_meta.get("downloads"):
+                return sp_meta["downloads"][0]["url"]
+        return raw_url
+
     def _handle_proxy_or_download(self, target_url: str, is_download: bool, qs: dict):
+        target_url = self._resolve_token_if_needed(target_url)
         if not target_url.startswith("http"):
             self._send_json(400, {"error": "URL stream tidak valid."})
             return
@@ -929,10 +1072,15 @@ class handler(BaseHTTPRequestHandler):
             "Accept": "*/*",
             "Referer": get_upstream_referer(target_url),
         }
+        if "gammacloud.net" in target_url.lower():
+            req_headers["Origin"] = "https://ytmp3.gl"
+        elif "cnvmp3" in target_url.lower():
+            req_headers["Origin"] = "https://cnvmp3.com"
 
         client_range = self.headers.get("Range")
         MAX_CHUNK = 3500000  # 3.5 MB chunk to stay safely below Vercel 4.5MB limit
         ext_hint = (qs.get("ext") or [""])[0].strip().lower()
+        start_byte = 0
 
         if client_range and not is_download:
             m = re.match(r"bytes=(\d+)-(\d*)", client_range)
@@ -967,6 +1115,15 @@ class handler(BaseHTTPRequestHandler):
                     return
 
                 data_bytes = upstream.read(MAX_CHUNK + 200000)
+
+                # Fix malformed Content-Range from proxy.piped.private.coffee using clen query param
+                m_clen = re.search(r"[?&]clen=(\d+)", target_url)
+                if m_clen and data_bytes and not is_download:
+                    total_clen = int(m_clen.group(1))
+                    if total_clen > 0:
+                        actual_end = min(total_clen - 1, start_byte + len(data_bytes) - 1)
+                        crange = f"bytes {start_byte}-{actual_end}/{total_clen}"
+                        status_code = 206
 
                 self.send_response(status_code)
                 self.send_header("Content-Type", ctype)
@@ -1062,16 +1219,11 @@ class handler(BaseHTTPRequestHandler):
         # Support /api/resolve on Vercel serverless
         if "resolve" in route:
             token_url = str(body.get("tokenUrl") or "").strip()
-            if token_url.startswith("http"):
-                self._send_json(200, {"status": "ok", "url": token_url})
+            resolved = self._resolve_token_if_needed(token_url)
+            if resolved.startswith("http"):
+                self._send_json(200, {"status": "ok", "url": resolved})
                 return
-            sp_m = re.search(r"spotify\.com/(?:intl-[a-z-]+/)?(track|episode)/([A-Za-z0-9]+)", token_url, re.I)
-            if sp_m:
-                sp_meta = fetch_spotify_rich(f"https://open.spotify.com/{sp_m.group(1)}/{sp_m.group(2)}")
-                if sp_meta and sp_meta.get("downloads"):
-                    self._send_json(200, {"status": "ok", "url": sp_meta["downloads"][0]["url"]})
-                    return
-            self._send_json(200, {"status": "ok", "url": FULL_LENGTH_FALLBACK_MP3})
+            self._send_json(422, {"error": "Gagal meresolusi stream media."})
             return
 
         target_url = str(body.get("url") or "").strip()

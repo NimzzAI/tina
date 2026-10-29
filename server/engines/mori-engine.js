@@ -2029,66 +2029,85 @@ export async function resolveUrl(url, onStatus) {
     url.startsWith("youtube_resolve:") ||
     url.startsWith("ytmp3gg_resolve:")
   ) {
-    if (onStatus) onStatus("Resolving YouTube audio via converter...");
+    if (onStatus) onStatus("Resolving YouTube stream via GammaCloud...");
     const raw = url.startsWith("youtube_resolve:")
       ? url.replace("youtube_resolve:", "")
       : url.replace("ytmp3gg_resolve:", "");
     const [ytId, format = "mp3"] = raw.split("|||");
+    const fmt = format.toLowerCase() === "mp4" ? "mp4" : "mp3";
 
-    const mobiHeaders = {
-      Origin: "https://ytmp3.mobi",
-      Referer: "https://ytmp3.mobi/en8/",
+    const landingRes = await fetch("https://ytmp3.as/", {
+      headers: { "User-Agent": CHROME_UA },
+      redirect: "follow",
+      signal: AbortSignal.timeout(8000),
+    });
+    const html = await landingRes.text();
+    const finalOrigin = new URL(landingRes.url || "https://ytmp3.gl/").origin;
+    const keyMatch = html.match(/var\s+apiKey\s*=\s*['"]([^'"]+)['"]/i);
+    if (!keyMatch?.[1]) {
+      throw new Error("Could not extract GammaCloud API key.");
+    }
+
+    const baseHeaders = {
+      Origin: finalOrigin,
+      Referer: `${finalOrigin}/`,
       "User-Agent": CHROME_UA,
-      "Sec-Fetch-Dest": "empty",
-      "Sec-Fetch-Mode": "cors",
-      "Sec-Fetch-Site": "cross-site",
-      Accept: "*/*",
+      Accept: "application/json, text/plain, */*",
     };
 
-    const initData = await scraperFetch({
-      url: `https://a.ymcdn.org/api/v1/init?p=y&23=1llum1n471&_=${Math.random()}`,
-      headers: mobiHeaders,
-    });
+    const authRes = await fetch(
+      `https://gamma.gammacloud.net/api/v1/auth?api_key=${encodeURIComponent(keyMatch[1])}&_=${Date.now()}`,
+      { headers: baseHeaders, signal: AbortSignal.timeout(8000) }
+    );
+    const authJson = await authRes.json();
+    if (!authJson?.key) {
+      throw new Error("GammaCloud authorization failed.");
+    }
 
-    if (initData && !initData.error && initData.convertURL) {
-      let convData = await scraperFetch({
-        url: `${initData.convertURL}&v=${ytId}&f=${format}&_=${Math.random()}`,
-        headers: mobiHeaders,
-      });
-
-      while (convData && convData.redirect > 0 && convData.redirectURL) {
-        convData = await scraperFetch({
-          url: `${convData.redirectURL}&v=${ytId}&f=${format}&_=${Math.random()}`,
-          headers: mobiHeaders,
-        });
+    const initRes = await fetch(
+      `https://gamma.gammacloud.net/api/v1/init?_=${Date.now()}`,
+      {
+        headers: { ...baseHeaders, Authorization: `Bearer ${authJson.key}` },
+        signal: AbortSignal.timeout(8000),
       }
+    );
+    const initJson = await initRes.json();
+    if (!initJson?.convertURL) {
+      throw new Error("GammaCloud init failed.");
+    }
 
-      if (convData && !convData.error) {
-        let dlUrl = convData.downloadURL;
-        let progUrl = convData.progressURL;
-        let progress = 0;
-        let attempts = 0;
+    let convBase = String(initJson.convertURL).split("&v=")[0];
+    let convRes = await fetch(
+      `${convBase}&v=${encodeURIComponent(ytId)}&f=${fmt}&_=${Date.now()}`,
+      { headers: baseHeaders, signal: AbortSignal.timeout(10000) }
+    );
+    let convData = await convRes.json();
 
-        while (progress < 3 && attempts < 25) {
-          await new Promise((r) => setTimeout(r, 1200));
-          const pData = await scraperFetch({
-            url: `${progUrl}&_=${Math.random()}`,
-            headers: mobiHeaders,
+    if (convData?.redirect === 1 && convData?.redirectURL) {
+      const redirBase = String(convData.redirectURL).split("&v=")[0];
+      convRes = await fetch(
+        `${redirBase}&v=${encodeURIComponent(ytId)}&f=${fmt}&_=${Date.now()}`,
+        { headers: baseHeaders, signal: AbortSignal.timeout(10000) }
+      );
+      convData = await convRes.json();
+    }
+
+    if (convData && !convData.error) {
+      const dlUrl = convData.downloadURL;
+      const progUrl = convData.progressURL;
+      if (progUrl) {
+        for (let attempt = 0; attempt < 16; attempt++) {
+          const pRes = await fetch(`${progUrl}&_=${Date.now()}`, {
+            headers: baseHeaders,
+            signal: AbortSignal.timeout(8000),
           });
-          if (pData && !pData.error) {
-            progress = pData.progress;
-            if (pData.downloadURL) dlUrl = pData.downloadURL;
-            if (progress >= 3) break;
-          }
-          attempts++;
-        }
-
-        if (dlUrl && progress >= 3) {
-          if (dlUrl.startsWith("//")) dlUrl = "https:" + dlUrl;
-          if (dlUrl.startsWith("/")) dlUrl = "https://ytmp3.mobi" + dlUrl;
-          return dlUrl;
+          const pData = await pRes.json();
+          if (pData?.error > 0) break;
+          if ((pData?.progress ?? 0) >= 3) break;
+          await new Promise((r) => setTimeout(r, 1200));
         }
       }
+      if (dlUrl) return dlUrl;
     }
     throw new Error("YouTube direct conversion timed out or failed.");
   }

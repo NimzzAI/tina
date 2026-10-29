@@ -68,8 +68,7 @@ export function V10VideoPlayer({
 
   const youtubeId = extractYouTubeId(webpageUrl, activeStream.id);
   const isSampleFallbackStream =
-    activeStream.url.includes('commondatastorage.googleapis.com') ||
-    activeStream.url.includes('proxy.piped.private.coffee');
+    activeStream.url.includes('commondatastorage.googleapis.com');
 
   const [useYoutubeEmbed, setUseYoutubeEmbed] = useState<boolean>(
     Boolean(youtubeId && isSampleFallbackStream)
@@ -93,8 +92,7 @@ export function V10VideoPlayer({
   useEffect(() => {
     const ytId = extractYouTubeId(webpageUrl, activeStream.id);
     const isFallback =
-      activeStream.url.includes('commondatastorage.googleapis.com') ||
-      activeStream.url.includes('proxy.piped.private.coffee');
+      activeStream.url.includes('commondatastorage.googleapis.com');
     setUseYoutubeEmbed(Boolean(ytId && isFallback));
     setFallbackStage(0);
   }, [webpageUrl, activeStream.id, activeStream.url]);
@@ -711,16 +709,16 @@ export function V10AudioPlayer({
       stream.url.startsWith('youtube_resolve:') ||
       stream.url.startsWith('ytmp3gg_resolve:')
     ) {
-      return `/api/proxy-stream?url=${encodeURIComponent(stream.url)}&ext=mp3`;
+      return `/api/proxy-stream?url=${encodeURIComponent(stream.url)}&ext=${stream.ext || 'mp3'}`;
     }
     const base = buildStreamUrl(stream.url);
     if (fallbackStage === 0) return base;
     if (fallbackStage === 1) {
       return base.startsWith('/api/proxy-stream')
         ? stream.url
-        : `/api/proxy-stream?url=${encodeURIComponent(stream.url)}&ext=mp3`;
+        : `/api/proxy-stream?url=${encodeURIComponent(stream.url)}&ext=${stream.ext || 'mp3'}`;
     }
-    return 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+    return `/api/proxy-stream?url=${encodeURIComponent(stream.url)}&ext=${stream.ext || 'mp3'}`;
   })();
 
   const togglePlay = () => {
@@ -728,7 +726,7 @@ export function V10AudioPlayer({
     if (!aud) return;
     if (aud.paused) {
       aud.play().catch(() => {
-        if (fallbackStage < 2) setFallbackStage((s) => s + 1);
+        if (fallbackStage < 1) setFallbackStage((s) => s + 1);
       });
     } else {
       aud.pause();
@@ -763,7 +761,7 @@ export function V10AudioPlayer({
         src={effectiveAudioSrc}
         preload="metadata"
         onError={() => {
-          if (fallbackStage < 2) {
+          if (fallbackStage < 1) {
             setFallbackStage((prev) => prev + 1);
           }
         }}
@@ -773,11 +771,12 @@ export function V10AudioPlayer({
           const loadedDur = e.currentTarget.duration;
           const hintDur = parseDurationHintSeconds(durationHint);
           if (Number.isFinite(loadedDur) && loadedDur > 0) {
-            // If stream is full-length or no hint exists, use actual audio element duration
-            if (loadedDur >= 32 || !hintDur || stream.url.includes('mp3-preview')) {
+            if (loadedDur >= 5 && !stream.url.includes('mp3-preview')) {
               setDuration(loadedDur);
-            } else {
+            } else if (hintDur > 0) {
               setDuration(hintDur);
+            } else {
+              setDuration(loadedDur);
             }
           }
         }}

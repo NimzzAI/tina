@@ -291,6 +291,326 @@ async function fetchTikTokRichMedia(targetUrl: string): Promise<any | null> {
   }
 }
 
+async function resolveGammaCloudYouTube(
+  videoId: string,
+  format: 'mp3' | 'mp4' = 'mp3'
+): Promise<string | null> {
+  // 1. Fast check on CnvMP3 pre-cached database (~300ms)
+  try {
+    const cnvRes = await fetch('https://cnvmp3.com/check_database.php', {
+      method: 'POST',
+      headers: {
+        'User-Agent': CHROME_UA,
+        'Content-Type': 'application/json',
+        Origin: 'https://cnvmp3.com',
+        Referer: 'https://cnvmp3.com/v55',
+      },
+      body: JSON.stringify({
+        youtube_id: videoId,
+        quality: format === 'mp3' ? 0 : 720,
+        formatValue: format === 'mp3' ? 1 : 0,
+      }),
+      signal: AbortSignal.timeout(4500),
+    });
+    if (cnvRes.ok) {
+      const cnvJson: any = await cnvRes.json();
+      const serverPath = cnvJson?.data?.server_path;
+      if (!cnvJson?.error && typeof serverPath === 'string' && serverPath.startsWith('http')) {
+        return serverPath;
+      }
+    }
+  } catch {
+    // continue to GammaCloud
+  }
+
+  // 2. GammaCloud Direct Converter (ytmp3.as -> ytmp3.gl -> gamma.gammacloud.net)
+  try {
+    const landingRes = await fetch('https://ytmp3.as/', {
+      headers: { 'User-Agent': CHROME_UA },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(7000),
+    });
+    if (!landingRes.ok) return null;
+    const html = await landingRes.text();
+    const finalOrigin = new URL(landingRes.url || 'https://ytmp3.gl/').origin;
+    const keyMatch = html.match(/var\s+apiKey\s*=\s*['"]([^'"]+)['"]/i);
+    if (!keyMatch?.[1]) return null;
+
+    const baseHeaders: Record<string, string> = {
+      'User-Agent': CHROME_UA,
+      Origin: finalOrigin,
+      Referer: `${finalOrigin}/`,
+      Accept: 'application/json, text/plain, */*',
+    };
+
+    const authRes = await fetch(
+      `https://gamma.gammacloud.net/api/v1/auth?api_key=${encodeURIComponent(keyMatch[1])}&_=${Date.now()}`,
+      { headers: baseHeaders, signal: AbortSignal.timeout(7000) }
+    );
+    if (!authRes.ok) return null;
+    const authJson: any = await authRes.json();
+    if (!authJson?.key) return null;
+
+    const initRes = await fetch(`https://gamma.gammacloud.net/api/v1/init?_=${Date.now()}`, {
+      headers: { ...baseHeaders, Authorization: `Bearer ${authJson.key}` },
+      signal: AbortSignal.timeout(7000),
+    });
+    if (!initRes.ok) return null;
+    const initJson: any = await initRes.json();
+    if (!initJson?.convertURL) return null;
+
+    const convBase = String(initJson.convertURL).split('&v=')[0];
+    let convRes = await fetch(
+      `${convBase}&v=${encodeURIComponent(videoId)}&f=${format}&_=${Date.now()}`,
+      { headers: baseHeaders, signal: AbortSignal.timeout(9000) }
+    );
+    let convData: any = await convRes.json();
+
+    if (convData?.redirect === 1 && convData?.redirectURL) {
+      const redirBase = String(convData.redirectURL).split('&v=')[0];
+      convRes = await fetch(
+        `${redirBase}&v=${encodeURIComponent(videoId)}&f=${format}&_=${Date.now()}`,
+        { headers: baseHeaders, signal: AbortSignal.timeout(9000) }
+      );
+      convData = await convRes.json();
+    }
+
+    if (!convData || convData.error) return null;
+    const dlUrl = convData.downloadURL;
+    const progUrl = convData.progressURL;
+
+    if (progUrl) {
+      for (let i = 0; i < 14; i++) {
+        const pRes = await fetch(`${progUrl}&_=${Date.now()}`, {
+          headers: baseHeaders,
+          signal: AbortSignal.timeout(7000),
+        });
+        if (pRes.ok) {
+          const pData: any = await pRes.json();
+          if (pData?.error > 0) break;
+          if ((pData?.progress ?? 0) >= 3) break;
+        }
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+    }
+
+    return typeof dlUrl === 'string' && dlUrl.startsWith('http') ? dlUrl : null;
+  } catch {
+    return null;
+  }
+}
+
+async function searchYouTubeVideoId(query: string): Promise<string | null> {
+  try {
+    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+    const res = await fetch(searchUrl, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      signal: AbortSignal.timeout(7000),
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const match = html.match(/"videoRenderer":\{"videoId":"([a-zA-Z0-9_-]{11})"/);
+    return match?.[1] || null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
+  const ytMatch = targetUrl.match(
+    /(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?|shorts|live)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/i
+  );
+  if (!ytMatch?.[1]) return null;
+  const videoId = ytMatch[1];
+
+  let ytTitle = 'YouTube Video HD';
+  let ytAuthor = 'YouTube Creator';
+  let ytAuthorUrl: string | undefined;
+  let ytThumb = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+  let ytDurationSec = 0;
+  let ytDuration = '';
+  let ytUploadDate = new Date().toISOString().slice(0, 10);
+  let ytViews: number | null = null;
+  let ytLikes: number | null = null;
+  let ytDescription: string | undefined;
+
+  const downloads: any[] = [];
+
+  // Run Piped Streams API, YouTube Official oEmbed, and GammaCloud MP3 resolver in parallel
+  const [pipedSettled, oembedSettled, gammaMp3Settled] = await Promise.allSettled([
+    fetch(`https://api.piped.private.coffee/streams/${videoId}`, {
+      headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    }).then(async (r) => (r.ok ? r.json() : null)),
+    fetch(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(
+        `https://www.youtube.com/watch?v=${videoId}`
+      )}&format=json`,
+      { headers: { 'User-Agent': CHROME_UA }, signal: AbortSignal.timeout(6000) }
+    ).then(async (r) => (r.ok ? r.json() : null)),
+    resolveGammaCloudYouTube(videoId, 'mp3'),
+  ]);
+
+  const pdata: any = pipedSettled.status === 'fulfilled' ? pipedSettled.value : null;
+  const oe: any = oembedSettled.status === 'fulfilled' ? oembedSettled.value : null;
+  const gammaMp3Url: string | null =
+    gammaMp3Settled.status === 'fulfilled' ? gammaMp3Settled.value : null;
+
+  if (pdata) {
+    if (pdata.title) ytTitle = pdata.title;
+    if (pdata.uploader) ytAuthor = pdata.uploader;
+    if (pdata.uploaderUrl) ytAuthorUrl = `https://www.youtube.com${pdata.uploaderUrl}`;
+    if (pdata.thumbnailUrl) ytThumb = pdata.thumbnailUrl;
+    if (typeof pdata.duration === 'number' && pdata.duration > 0) {
+      ytDurationSec = pdata.duration;
+      ytDuration = formatDurationSeconds(pdata.duration);
+    }
+    if (pdata.uploadDate) ytUploadDate = String(pdata.uploadDate).slice(0, 10);
+    if (typeof pdata.views === 'number') ytViews = pdata.views;
+    if (typeof pdata.likes === 'number') ytLikes = pdata.likes;
+    if (typeof pdata.description === 'string') ytDescription = pdata.description.slice(0, 800);
+
+    const vStreams: any[] = Array.isArray(pdata.videoStreams) ? pdata.videoStreams : [];
+    const progressive = vStreams.filter((s) => !s?.videoOnly && typeof s?.url === 'string');
+
+    for (const s of progressive) {
+      const resLabel = String(s.quality || '360p');
+      const clenMatch = String(s.url).match(/[?&]clen=(\d+)/);
+      const clenBytes = clenMatch ? Number(clenMatch[1]) : null;
+      const estBytes =
+        clenBytes ||
+        (s.bitrate && ytDurationSec ? Math.floor((Number(s.bitrate) / 8) * ytDurationSec) : null);
+
+      downloads.push({
+        id: `yt_${videoId}_vid_${resLabel}`,
+        type: 'video',
+        quality: `Video ${resLabel} ${
+          resLabel.includes('1080') ? 'Full HD' : resLabel.includes('720') ? 'HD' : 'SD'
+        } (MP4)`,
+        ext: 'mp4',
+        url: s.url,
+        filesize: estBytes,
+        filesizeFormatted: formatBytes(estBytes),
+        resolution: resLabel,
+        vcodec: 'H.264',
+        acodec: 'AAC',
+        fps: s.fps || 30,
+      });
+    }
+
+    const aStreams: any[] = Array.isArray(pdata.audioStreams) ? pdata.audioStreams : [];
+    for (const a of aStreams.slice(0, 2)) {
+      if (typeof a?.url === 'string') {
+        const abr = String(a.quality || '128kbps');
+        const clenMatch = String(a.url).match(/[?&]clen=(\d+)/);
+        const clenBytes = clenMatch ? Number(clenMatch[1]) : null;
+        downloads.push({
+          id: `yt_${videoId}_aud_${abr}`,
+          type: 'audio',
+          quality: `Audio Stream ${abr} (M4A)`,
+          ext: 'm4a',
+          url: a.url,
+          filesize: clenBytes,
+          filesizeFormatted: formatBytes(clenBytes),
+          acodec: 'AAC',
+          resolution: abr,
+        });
+      }
+    }
+  }
+
+  if (oe) {
+    if (ytTitle === 'YouTube Video HD' && oe.title) ytTitle = oe.title;
+    if (ytAuthor === 'YouTube Creator' && oe.author_name) ytAuthor = oe.author_name;
+    if (!ytAuthorUrl && oe.author_url) ytAuthorUrl = oe.author_url;
+    if (oe.thumbnail_url && !pdata?.thumbnailUrl) ytThumb = oe.thumbnail_url;
+  }
+
+  // If Piped did not return a progressive video stream, resolve MP4 via GammaCloud
+  if (!downloads.some((d) => d.type === 'video')) {
+    const gammaMp4Url = await resolveGammaCloudYouTube(videoId, 'mp4');
+    if (gammaMp4Url) {
+      downloads.unshift({
+        id: `yt_${videoId}_mp4_hd`,
+        type: 'video',
+        quality: 'Video 720p HD · Direct Stream (MP4)',
+        ext: 'mp4',
+        url: gammaMp4Url,
+        filesizeFormatted: ytDurationSec ? formatBytes(ytDurationSec * 180000) : undefined,
+        resolution: '720p',
+        vcodec: 'H.264',
+        acodec: 'AAC',
+        fps: 30,
+      });
+    }
+  }
+
+  // Always add real GammaCloud MP3 stream as top audio stream
+  if (gammaMp3Url) {
+    const estMp3Bytes = ytDurationSec > 0 ? ytDurationSec * 16000 : null;
+    downloads.push({
+      id: `yt_${videoId}_mp3_full`,
+      type: 'audio',
+      quality: `Audio Original · ${ytTitle.slice(0, 42)} (MP3)`,
+      ext: 'mp3',
+      url: gammaMp3Url,
+      filesize: estMp3Bytes,
+      filesizeFormatted: formatBytes(estMp3Bytes),
+      acodec: 'MP3',
+      resolution: '320kbps',
+    });
+  } else if (downloads.some((d) => d.type === 'video') && !downloads.some((d) => d.type === 'audio')) {
+    // Use the progressive muxed MP4 stream's audio track (decoded natively by HTML5 <audio>)
+    const firstVideo = downloads.find((d) => d.type === 'video');
+    if (firstVideo) {
+      downloads.push({
+        id: `yt_${videoId}_aud_muxed`,
+        type: 'audio',
+        quality: `Audio Original · ${ytTitle.slice(0, 42)} (M4A)`,
+        ext: 'm4a',
+        url: firstVideo.url,
+        filesizeFormatted: firstVideo.filesizeFormatted,
+        acodec: 'AAC',
+        resolution: '192kbps',
+      });
+    }
+  }
+
+  if (downloads.length === 0) {
+    return null;
+  }
+
+  const firstVideoRes = downloads.find((d) => d.type === 'video')?.resolution || '720p HD';
+
+  return {
+    title: ytTitle,
+    author: ytAuthor,
+    authorUrl: ytAuthorUrl,
+    platform: 'youtube',
+    extractorKey: 'TinaCore::YouTube',
+    engine: 'Tina Hybrid',
+    serverUsed: 'Tina Hybrid Core (YOUTUBE)',
+    webpageUrl: `https://www.youtube.com/watch?v=${videoId}`,
+    thumbnail: ytThumb,
+    duration: ytDuration,
+    durationSeconds: ytDurationSec || undefined,
+    uploadDate: ytUploadDate,
+    viewCount: ytViews,
+    likeCount: ytLikes,
+    description: ytDescription,
+    resolution: firstVideoRes,
+    fps: 30,
+    vcodec: 'H.264 (AVC1)',
+    acodec: 'AAC / MP3',
+    filesizeApprox: downloads[0]?.filesizeFormatted,
+    downloads,
+  };
+}
+
 async function fetchSpotifyRichMedia(targetUrl: string) {
   const m = targetUrl.match(/spotify\.com\/(?:intl-[a-z-]+\/)?(track|episode)\/([A-Za-z0-9]+)/i);
   const kind = m?.[1]?.toLowerCase() || 'track';
@@ -836,6 +1156,22 @@ async function startServer() {
             }
           }
         }
+      } else if (knownPlatform === 'youtube') {
+        const ytRich = await fetchYouTubeRichMedia(cleanTargetUrl);
+        if (ytRich) {
+          deepMeta = ytRich;
+        } else {
+          const [primaryAttempt, pyAttempt] = await Promise.allSettled([
+            scrapeUrl(cleanTargetUrl, 'auto', 'auto'),
+            runPythonEngine(['extract', cleanTargetUrl]),
+          ]);
+          if (primaryAttempt.status === 'fulfilled' && primaryAttempt.value) {
+            primaryMeta = normalizePrimaryExtractorOutput(primaryAttempt.value, cleanTargetUrl);
+          }
+          if (pyAttempt.status === 'fulfilled' && pyAttempt.value?.data) {
+            deepMeta = pyAttempt.value.data;
+          }
+        }
       } else if (knownPlatform) {
         const [primaryAttempt, pyAttempt] = await Promise.allSettled([
           scrapeUrl(cleanTargetUrl, 'auto', 'auto'),
@@ -851,138 +1187,6 @@ async function startServer() {
       } else {
         const pyRes = await runPythonEngine(['extract', cleanTargetUrl]);
         deepMeta = pyRes?.data || null;
-      }
-
-      // Fallback for YouTube when datacenter IP hits bot verification
-      if (!tikTokRichMeta && !primaryMeta && !deepMeta && knownPlatform === 'youtube') {
-        const ytMatch = cleanTargetUrl.match(
-          /(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?|shorts|live)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/i
-        );
-        const videoId = ytMatch?.[1] || 'Sgt6yH9UM-c';
-        let ytTitle = 'YouTube Video HD';
-        let ytAuthor = 'YouTube Creator';
-        let ytAuthorUrl: string | undefined;
-        let ytThumb = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
-        let ytDuration = '04:12';
-        let ytUploadDate = new Date().toISOString().slice(0, 10);
-        let ytViews: number | null = 114856;
-        let ytLikes: number | null = 3957;
-
-        try {
-          const pipedRes = await fetch(`https://api.piped.private.coffee/streams/${videoId}`, {
-            headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },
-            signal: AbortSignal.timeout(7000),
-          });
-          if (pipedRes.ok) {
-            const pdata: any = await pipedRes.json();
-            if (pdata.title) ytTitle = pdata.title;
-            if (pdata.uploader) ytAuthor = pdata.uploader;
-            if (pdata.uploaderUrl) ytAuthorUrl = `https://www.youtube.com${pdata.uploaderUrl}`;
-            if (pdata.thumbnailUrl) ytThumb = pdata.thumbnailUrl;
-            if (pdata.duration) ytDuration = formatDurationSeconds(pdata.duration) || ytDuration;
-            if (pdata.uploadDate) ytUploadDate = String(pdata.uploadDate).slice(0, 10);
-            if (typeof pdata.views === 'number') ytViews = pdata.views;
-            if (typeof pdata.likes === 'number') ytLikes = pdata.likes;
-          }
-        } catch {
-          // ignore
-        }
-
-        if (ytTitle === 'YouTube Video HD') {
-          try {
-            const oembedRes = await fetch(
-              `https://www.youtube.com/oembed?url=${encodeURIComponent(
-                `https://www.youtube.com/watch?v=${videoId}`
-              )}&format=json`,
-              { signal: AbortSignal.timeout(6000) }
-            );
-            if (oembedRes.ok) {
-              const oe: any = await oembedRes.json();
-              if (oe.title) ytTitle = oe.title;
-              if (oe.author_name) ytAuthor = oe.author_name;
-              if (oe.author_url) ytAuthorUrl = oe.author_url;
-              if (oe.thumbnail_url) ytThumb = oe.thumbnail_url;
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        const sampleHd1080 =
-          'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-        const sampleHd720 =
-          'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4';
-        const sampleAudio =
-          'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
-
-        deepMeta = {
-          title: ytTitle,
-          author: ytAuthor,
-          authorUrl: ytAuthorUrl,
-          platform: 'youtube',
-          extractorKey: 'TinaCore::YouTube',
-          engine: 'Tina Hybrid',
-          serverUsed: 'Tina Hybrid Core (YOUTUBE)',
-          webpageUrl: `https://www.youtube.com/watch?v=${videoId}`,
-          thumbnail: ytThumb,
-          duration: ytDuration,
-          uploadDate: ytUploadDate,
-          viewCount: ytViews,
-          likeCount: ytLikes,
-          resolution: '1920x1080 (Full HD)',
-          fps: 60,
-          vcodec: 'H.264 (AVC1)',
-          acodec: 'AAC / MP3',
-          filesizeApprox: '148.4 MB',
-          downloads: [
-            {
-              id: `yt_${videoId}_1080p`,
-              type: 'video',
-              quality: 'Video 1080p Full HD 60fps (MP4)',
-              ext: 'mp4',
-              url: sampleHd1080,
-              filesizeFormatted: '148.4 MB',
-              resolution: '1080p',
-              vcodec: 'H.264',
-              acodec: 'AAC',
-              fps: 60,
-            },
-            {
-              id: `yt_${videoId}_720p`,
-              type: 'video',
-              quality: 'Video 720p HD (MP4)',
-              ext: 'mp4',
-              url: sampleHd1080,
-              filesizeFormatted: '64.2 MB',
-              resolution: '720p',
-              vcodec: 'H.264',
-              acodec: 'AAC',
-              fps: 30,
-            },
-            {
-              id: `yt_${videoId}_480p`,
-              type: 'video',
-              quality: 'Video 480p SD (MP4)',
-              ext: 'mp4',
-              url: sampleHd720,
-              filesizeFormatted: '28.5 MB',
-              resolution: '480p',
-              vcodec: 'H.264',
-              acodec: 'AAC',
-              fps: 30,
-            },
-            {
-              id: `yt_${videoId}_mp3`,
-              type: 'audio',
-              quality: 'Audio Original 320kbps (MP3)',
-              ext: 'mp3',
-              url: sampleAudio,
-              filesizeFormatted: '8.4 MB',
-              acodec: 'MP3 320kbps',
-              resolution: '320kbps',
-            },
-          ],
-        };
       }
 
       let finalMetadata: any = null;
@@ -1025,23 +1229,6 @@ async function startServer() {
           }
         }
 
-        // Ensure Spotify always has a full-length 320kbps stream at index 0
-        if (
-          knownPlatform === 'spotify' &&
-          !mergedStreams.some((s) => s.type === 'audio' && !String(s.url).includes('mp3-preview'))
-        ) {
-          mergedStreams.unshift({
-            id: 'sp_full_320',
-            type: 'audio',
-            quality: `Audio Full Track 320kbps · ${deepMeta.title || primaryMeta.title} (MP3)`,
-            ext: 'mp3',
-            url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-            filesizeFormatted: deepMeta.filesizeApprox || '10.6 MB',
-            acodec: 'MP3 320kbps',
-            resolution: '320kbps',
-          });
-        }
-
         const mergedImages =
           primaryMeta.images?.length
             ? primaryMeta.images
@@ -1082,6 +1269,7 @@ async function startServer() {
         throw new Error('Tidak dapat mengekstrak media dari tautan tersebut.');
       }
 
+      // If Spotify only has a 30s preview because SpotiDown was unavailable, resolve full-track MP3 via YouTube Audio Match
       if (
         finalMetadata.platform === 'spotify' &&
         Array.isArray(finalMetadata.downloads) &&
@@ -1089,16 +1277,23 @@ async function startServer() {
           (s: any) => s.type === 'audio' && !String(s.url).includes('mp3-preview')
         )
       ) {
-        finalMetadata.downloads.unshift({
-          id: 'sp_full_320',
-          type: 'audio',
-          quality: `Audio Full Track 320kbps · ${finalMetadata.title || 'Spotify Track'} (MP3)`,
-          ext: 'mp3',
-          url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-          filesizeFormatted: finalMetadata.filesizeApprox || '10.6 MB',
-          acodec: 'MP3 320kbps',
-          resolution: '320kbps',
-        });
+        const searchQuery = `${finalMetadata.title || ''} Official Audio`.trim();
+        const matchedYtId = await searchYouTubeVideoId(searchQuery);
+        if (matchedYtId) {
+          const fullMp3Url = await resolveGammaCloudYouTube(matchedYtId, 'mp3');
+          if (fullMp3Url) {
+            finalMetadata.downloads.unshift({
+              id: `sp_full_320_${matchedYtId}`,
+              type: 'audio',
+              quality: `Audio Full Track 320kbps · ${finalMetadata.title || 'Spotify Track'} (MP3)`,
+              ext: 'mp3',
+              url: fullMp3Url,
+              filesizeFormatted: finalMetadata.filesizeApprox || '10.6 MB',
+              acodec: 'MP3 320kbps',
+              resolution: '320kbps',
+            });
+          }
+        }
       }
 
       // Stage 2b: Golang Stream Header Probing for size if missing
@@ -1295,6 +1490,8 @@ async function startServer() {
   function buildSmartUpstreamHeaders(finalUrl: string, rangeHeader?: string): Record<string, string> {
     const lower = finalUrl.toLowerCase();
     let referer = `${new URL(finalUrl).origin}/`;
+    let origin: string | undefined;
+
     if (lower.includes('tiktokcdn') || lower.includes('tiktok.com') || lower.includes('musical.ly')) {
       referer = 'https://www.tiktok.com/';
     } else if (lower.includes('tikwm.com')) {
@@ -1307,6 +1504,12 @@ async function startServer() {
       referer = 'https://www.bilibili.com/';
     } else if (lower.includes('spotidown')) {
       referer = 'https://spotidown.app/';
+    } else if (lower.includes('gammacloud.net')) {
+      referer = 'https://ytmp3.gl/';
+      origin = 'https://ytmp3.gl';
+    } else if (lower.includes('cnvmp3')) {
+      referer = 'https://cnvmp3.com/v55';
+      origin = 'https://cnvmp3.com';
     }
 
     const headers: Record<string, string> = {
@@ -1314,6 +1517,9 @@ async function startServer() {
       Accept: '*/*',
       Referer: referer,
     };
+    if (origin) {
+      headers['Origin'] = origin;
+    }
     if (rangeHeader) {
       headers['Range'] = rangeHeader;
     }
@@ -1363,10 +1569,8 @@ async function startServer() {
         finalUrl = await resolveUrl(finalUrl);
       }
 
-      const upstream = await fetchUpstreamMedia(
-        finalUrl,
-        typeof req.headers.range === 'string' ? req.headers.range : undefined
-      );
+      const clientRange = typeof req.headers.range === 'string' ? req.headers.range : undefined;
+      const upstream = await fetchUpstreamMedia(finalUrl, clientRange);
 
       if (!upstream.ok && upstream.status !== 206) {
         return res.status(502).send('Gagal memuat stream media.');
@@ -1382,8 +1586,21 @@ async function startServer() {
 
       const contentType = getExplicitMimeType(inferredExt, upstreamType);
       const contentLength = upstream.headers.get('content-length');
-      const contentRange = upstream.headers.get('content-range');
+      let contentRange = upstream.headers.get('content-range');
       const acceptRanges = upstream.headers.get('accept-ranges') || 'bytes';
+
+      // Fix malformed Content-Range from proxy.piped.private.coffee when closed Range is requested
+      const clenMatch = finalUrl.match(/[?&]clen=(\d+)/);
+      if (clenMatch && clientRange) {
+        const totalClen = Number(clenMatch[1]);
+        const rangeMatch = clientRange.match(/bytes=(\d+)-(\d*)/);
+        if (rangeMatch && totalClen > 0) {
+          const startByte = Number(rangeMatch[1]);
+          const chunkLen = contentLength ? Number(contentLength) : totalClen - startByte;
+          const endByte = Math.min(totalClen - 1, startByte + chunkLen - 1);
+          contentRange = `bytes ${startByte}-${endByte}/${totalClen}`;
+        }
+      }
 
       res.setHeader('Content-Type', contentType);
       res.setHeader('Accept-Ranges', acceptRanges);
