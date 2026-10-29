@@ -154,7 +154,12 @@ const FAQ_ITEMS = [
 function buildProxyStreamUrl(rawUrl?: string): string {
   if (!rawUrl) return '';
   const lower = rawUrl.toLowerCase();
-  if (lower.includes('spotidown.app')) {
+  if (
+    lower.includes('spotidown.app') ||
+    lower.includes('gammacloud.net') ||
+    lower.includes('cnvmp3.com') ||
+    (lower.includes('theresav.eu') && lower.endsWith('.mp3'))
+  ) {
     return `/api/proxy-stream?url=${encodeURIComponent(rawUrl)}&ext=mp3`;
   }
   const needsRefererProxy =
@@ -162,7 +167,9 @@ function buildProxyStreamUrl(rawUrl?: string): string {
     lower.includes('hdslb.com') ||
     lower.includes('bilivideo.com') ||
     lower.includes('xhscdn.com') ||
-    lower.includes('sinaimg.cn');
+    lower.includes('sinaimg.cn') ||
+    lower.includes('piped.private.coffee') ||
+    lower.includes('_resolve:');
   if (needsRefererProxy) {
     return `/api/proxy-stream?url=${encodeURIComponent(rawUrl)}`;
   }

@@ -293,7 +293,8 @@ async function fetchTikTokRichMedia(targetUrl: string): Promise<any | null> {
 
 async function resolveGammaCloudYouTube(
   videoId: string,
-  format: 'mp3' | 'mp4' = 'mp3'
+  format: 'mp3' | 'mp4' = 'mp3',
+  fastCacheOnly = false
 ): Promise<string | null> {
   // 1. Fast check on CnvMP3 pre-cached database (~300ms)
   try {
@@ -310,7 +311,7 @@ async function resolveGammaCloudYouTube(
         quality: format === 'mp3' ? 0 : 720,
         formatValue: format === 'mp3' ? 1 : 0,
       }),
-      signal: AbortSignal.timeout(4500),
+      signal: AbortSignal.timeout(3500),
     });
     if (cnvRes.ok) {
       const cnvJson: any = await cnvRes.json();
@@ -320,8 +321,10 @@ async function resolveGammaCloudYouTube(
       }
     }
   } catch {
-    // continue to GammaCloud
+    // continue
   }
+
+  if (fastCacheOnly) return null;
 
   // 2. GammaCloud Direct Converter (ytmp3.as -> ytmp3.gl -> gamma.gammacloud.net)
   try {
@@ -420,12 +423,126 @@ async function searchYouTubeVideoId(query: string): Promise<string | null> {
   }
 }
 
+const THERESAV_API_KEY = 'ntzckofficial';
+
+async function fetchTheresaVEndpoint(
+  endpoint: 'ytmp4' | 'ytmp3' | 'ytdl' | 'aio',
+  targetUrl: string,
+  extraQuery = '',
+  timeoutMs = 15000
+): Promise<any | null> {
+  try {
+    const apiUrl = `https://api.theresav.eu/api/download/${endpoint}?url=${encodeURIComponent(targetUrl)}${extraQuery}`;
+    const res = await fetch(apiUrl, {
+      headers: {
+        'User-Agent': CHROME_UA,
+        'x-apikey': THERESAV_API_KEY,
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) return null;
+    const json: any = await res.json();
+    if (!json || json.status === false) return null;
+    return json;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchTheresaVAioMedia(targetUrl: string): Promise<any | null> {
+  const aio = await fetchTheresaVEndpoint('aio', targetUrl, '', 16000);
+  const res = aio?.result;
+  if (!res || typeof res !== 'object') return null;
+
+  const rawMedias: any[] = Array.isArray(res.medias) ? res.medias : [];
+  const downloads: any[] = [];
+  const images: string[] = [];
+  const seenUrls = new Set<string>();
+
+  for (let i = 0; i < rawMedias.length; i++) {
+    const m = rawMedias[i];
+    const u = String(m?.url || '').trim();
+    if (!u || !u.startsWith('http') || seenUrls.has(u)) continue;
+    // Skip slow SSE progress endpoints when direct streams are expected
+    if (u.includes('zm.io.vn/sse-progress') || u.includes('cdn-spotify-inter.zm.io.vn')) continue;
+    seenUrls.add(u);
+
+    const mType = String(m.type || 'video').toLowerCase();
+    const ext = String(m.ext || (mType === 'audio' ? 'mp3' : mType === 'image' ? 'jpg' : 'mp4')).toLowerCase();
+    const qual = String(m.quality || 'HD').trim();
+    const sizeStr = m.size && m.size !== '-' ? String(m.size) : undefined;
+
+    if (mType === 'image' || ['jpg', 'jpeg', 'png', 'webp'].includes(ext)) {
+      images.push(u);
+      downloads.push({
+        id: `tv_aio_img_${i + 1}`,
+        type: 'image',
+        quality: `Foto Slide #${images.length} · Resolusi Penuh (${ext.toUpperCase()})`,
+        ext,
+        url: u,
+        filesizeFormatted: sizeStr,
+        resolution: 'Full HD',
+      });
+    } else if (mType === 'audio' || ['mp3', 'm4a', 'ogg', 'wav', 'opus'].includes(ext)) {
+      downloads.push({
+        id: `tv_aio_aud_${i + 1}`,
+        type: 'audio',
+        quality: `Audio ${qual} (${ext.toUpperCase()})`,
+        ext,
+        url: u,
+        filesizeFormatted: sizeStr,
+        acodec: ext === 'mp3' ? 'MP3' : 'AAC',
+        resolution: qual,
+      });
+    } else {
+      const cleanLabel = qual
+        .replace(/_/g, ' ')
+        .replace(/\bno watermark\b/i, 'Tanpa Watermark')
+        .replace(/\bhd\b/i, 'HD');
+      downloads.push({
+        id: `tv_aio_vid_${i + 1}`,
+        type: 'video',
+        quality: `Video ${cleanLabel} (${ext.toUpperCase()})`,
+        ext: 'mp4',
+        url: u,
+        filesizeFormatted: sizeStr,
+        vcodec: 'H.264',
+        acodec: 'AAC',
+        resolution: qual.match(/\d{3,4}p/i)?.[0] || 'HD',
+      });
+    }
+  }
+
+  if (downloads.length === 0) return null;
+
+  const detectedPlat = detectPlatform(targetUrl) || String(res.platform || 'media').toLowerCase();
+  return {
+    title: res.title || 'Media Stream HD',
+    author: res.author || res.platform || 'Creator',
+    platform: detectedPlat,
+    extractorKey: `TinaCore::TheresaVAIO`,
+    engine: 'Tina Hybrid',
+    serverUsed: `Tina Hybrid Core (${detectedPlat.toUpperCase()})`,
+    webpageUrl: res.source || targetUrl,
+    thumbnail: res.thumbnail || (images[0] ?? ''),
+    duration: res.duration ? String(res.duration) : '',
+    uploadDate: new Date().toISOString().slice(0, 10),
+    resolution: images.length > 0 ? `${images.length} Foto HD` : downloads[0]?.resolution || '1080p HD',
+    vcodec: images.length > 0 ? undefined : 'H.264 (AVC1)',
+    acodec: 'AAC / MP3',
+    downloads,
+    images: images.length > 0 ? images : undefined,
+  };
+}
+
 async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
   const ytMatch = targetUrl.match(
     /(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?|shorts|live)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/i
   );
   if (!ytMatch?.[1]) return null;
   const videoId = ytMatch[1];
+  const canonicalYtUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
   let ytTitle = 'YouTube Video HD';
   let ytAuthor = 'YouTube Creator';
@@ -439,45 +556,141 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
   let ytDescription: string | undefined;
 
   const downloads: any[] = [];
+  const seenUrls = new Set<string>();
 
-  // Run Piped Streams API, YouTube Official oEmbed, and GammaCloud MP3 resolver in parallel
-  const [pipedSettled, oembedSettled, gammaMp3Settled] = await Promise.allSettled([
+  // Run TheresaV (ytmp4 1080p, ytmp4 360p, ytmp3, ytdl, aio), Piped, oEmbed, and CnvMP3 in parallel
+  const [
+    tvMp4HdSettled,
+    tvMp4SdSettled,
+    tvMp3Settled,
+    tvYtdlSettled,
+    tvAioSettled,
+    pipedSettled,
+    oembedSettled,
+    gammaMp3Settled,
+  ] = await Promise.allSettled([
+    fetchTheresaVEndpoint('ytmp4', targetUrl, '&resolution=1080', 16000),
+    fetchTheresaVEndpoint('ytmp4', targetUrl, '&resolution=360', 14000),
+    fetchTheresaVEndpoint('ytmp3', targetUrl, '', 16000),
+    fetchTheresaVEndpoint('ytdl', targetUrl, '', 14000),
+    fetchTheresaVEndpoint('aio', targetUrl, '', 14000),
     fetch(`https://api.piped.private.coffee/streams/${videoId}`, {
       headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(7000),
     }).then(async (r) => (r.ok ? r.json() : null)),
     fetch(
-      `https://www.youtube.com/oembed?url=${encodeURIComponent(
-        `https://www.youtube.com/watch?v=${videoId}`
-      )}&format=json`,
-      { headers: { 'User-Agent': CHROME_UA }, signal: AbortSignal.timeout(6000) }
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(canonicalYtUrl)}&format=json`,
+      { headers: { 'User-Agent': CHROME_UA }, signal: AbortSignal.timeout(5000) }
     ).then(async (r) => (r.ok ? r.json() : null)),
-    resolveGammaCloudYouTube(videoId, 'mp3'),
+    resolveGammaCloudYouTube(videoId, 'mp3', true),
   ]);
 
+  const tvMp4Hd: any = tvMp4HdSettled.status === 'fulfilled' ? tvMp4HdSettled.value : null;
+  const tvMp4Sd: any = tvMp4SdSettled.status === 'fulfilled' ? tvMp4SdSettled.value : null;
+  const tvMp3: any = tvMp3Settled.status === 'fulfilled' ? tvMp3Settled.value : null;
+  const tvYtdl: any = tvYtdlSettled.status === 'fulfilled' ? tvYtdlSettled.value : null;
+  const tvAio: any = tvAioSettled.status === 'fulfilled' ? tvAioSettled.value : null;
   const pdata: any = pipedSettled.status === 'fulfilled' ? pipedSettled.value : null;
   const oe: any = oembedSettled.status === 'fulfilled' ? oembedSettled.value : null;
-  const gammaMp3Url: string | null =
+  let gammaMp3Url: string | null =
     gammaMp3Settled.status === 'fulfilled' ? gammaMp3Settled.value : null;
+  if (!tvMp3?.download_url && !gammaMp3Url) {
+    gammaMp3Url = await resolveGammaCloudYouTube(videoId, 'mp3', false);
+  }
 
+  // 1. Populate Metadata from TheresaV (ytmp4 / ytmp3 / ytdl / aio)
+  const tvPrimary = tvMp4Hd || tvMp3 || tvMp4Sd || tvYtdl;
+  if (tvPrimary) {
+    if (tvPrimary.title) ytTitle = tvPrimary.title;
+    if (tvPrimary.channel) ytAuthor = tvPrimary.channel;
+    if (tvPrimary.thumbnail) ytThumb = tvPrimary.thumbnail;
+    if (typeof tvPrimary.duration_sec === 'number' && tvPrimary.duration_sec > 0) {
+      ytDurationSec = tvPrimary.duration_sec;
+      ytDuration = formatDurationSeconds(tvPrimary.duration_sec);
+    }
+    if (typeof tvPrimary.view_count === 'number') ytViews = tvPrimary.view_count;
+    if (typeof tvPrimary.like_count === 'number') ytLikes = tvPrimary.like_count;
+    if (tvPrimary.upload_date) ytUploadDate = String(tvPrimary.upload_date);
+  }
+
+  if (tvYtdl?.result) {
+    const r = tvYtdl.result;
+    if (ytTitle === 'YouTube Video HD' && r.title) ytTitle = r.title;
+    if (!ytDurationSec && typeof r.duration === 'number' && r.duration > 0) {
+      ytDurationSec = r.duration;
+      ytDuration = formatDurationSeconds(r.duration) || r.duration_formatted || '';
+    }
+    if (!ytDuration && r.duration_formatted) ytDuration = String(r.duration_formatted);
+    if (r.thumbnail && ytThumb.includes('maxresdefault')) ytThumb = r.thumbnail;
+  }
+
+  if (tvAio?.result) {
+    const ar = tvAio.result;
+    if (ytTitle === 'YouTube Video HD' && ar.title) ytTitle = ar.title;
+    if (!ytDuration && ar.duration) ytDuration = String(ar.duration);
+    if (ar.thumbnail && ytThumb.includes('maxresdefault')) ytThumb = ar.thumbnail;
+  }
+
+  // 2. Enrich Metadata from Piped & oEmbed
   if (pdata) {
-    if (pdata.title) ytTitle = pdata.title;
-    if (pdata.uploader) ytAuthor = pdata.uploader;
+    if (ytTitle === 'YouTube Video HD' && pdata.title) ytTitle = pdata.title;
+    if (ytAuthor === 'YouTube Creator' && pdata.uploader) ytAuthor = pdata.uploader;
     if (pdata.uploaderUrl) ytAuthorUrl = `https://www.youtube.com${pdata.uploaderUrl}`;
-    if (pdata.thumbnailUrl) ytThumb = pdata.thumbnailUrl;
-    if (typeof pdata.duration === 'number' && pdata.duration > 0) {
+    if (pdata.thumbnailUrl && ytThumb.includes('maxresdefault')) ytThumb = pdata.thumbnailUrl;
+    if (!ytDurationSec && typeof pdata.duration === 'number' && pdata.duration > 0) {
       ytDurationSec = pdata.duration;
       ytDuration = formatDurationSeconds(pdata.duration);
     }
-    if (pdata.uploadDate) ytUploadDate = String(pdata.uploadDate).slice(0, 10);
-    if (typeof pdata.views === 'number') ytViews = pdata.views;
-    if (typeof pdata.likes === 'number') ytLikes = pdata.likes;
+    if (pdata.uploadDate && ytUploadDate.includes('-')) ytUploadDate = String(pdata.uploadDate).slice(0, 10);
+    if (ytViews === null && typeof pdata.views === 'number') ytViews = pdata.views;
+    if (ytLikes === null && typeof pdata.likes === 'number') ytLikes = pdata.likes;
     if (typeof pdata.description === 'string') ytDescription = pdata.description.slice(0, 800);
+  }
 
-    const vStreams: any[] = Array.isArray(pdata.videoStreams) ? pdata.videoStreams : [];
-    const progressive = vStreams.filter((s) => !s?.videoOnly && typeof s?.url === 'string');
+  if (oe) {
+    if (ytTitle === 'YouTube Video HD' && oe.title) ytTitle = oe.title;
+    if (ytAuthor === 'YouTube Creator' && oe.author_name) ytAuthor = oe.author_name;
+    if (!ytAuthorUrl && oe.author_url) ytAuthorUrl = oe.author_url;
+    if (oe.thumbnail_url && ytThumb.includes('maxresdefault')) ytThumb = oe.thumbnail_url;
+  }
 
+  // 3. Add Primary Video Streams from TheresaV (ytmp4 1080p/720p, ytdl top-level, ytmp4 360p)
+  const addTheresaVideo = (tvObj: any, fallbackRes: string, idSuffix: string) => {
+    const dl = tvObj?.download_url;
+    if (typeof dl === 'string' && dl.startsWith('http') && !seenUrls.has(dl)) {
+      seenUrls.add(dl);
+      const rawRes = String(tvObj.resolution || fallbackRes).replace(/p$/i, '');
+      const resLabel = `${rawRes}p`;
+      const bytes = typeof tvObj.filesize === 'number' && tvObj.filesize > 0 ? tvObj.filesize : null;
+      const tier = Number(rawRes) >= 1080 ? 'Full HD' : Number(rawRes) >= 720 ? 'HD' : 'SD';
+      downloads.push({
+        id: `yt_${videoId}_tv_${idSuffix}_${resLabel}`,
+        type: 'video',
+        quality: `Video ${resLabel} ${tier} · Direct Stream (MP4)`,
+        ext: 'mp4',
+        url: dl,
+        filesize: bytes,
+        filesizeFormatted: formatBytes(bytes),
+        resolution: resLabel,
+        vcodec: 'H.264',
+        acodec: 'AAC',
+        fps: 30,
+      });
+    }
+  };
+
+  addTheresaVideo(tvMp4Hd, '720', 'hd');
+  if (tvYtdl?.download_url) {
+    addTheresaVideo(tvYtdl, '720', 'ytdl');
+  }
+  addTheresaVideo(tvMp4Sd, '360', 'sd');
+
+  // 4. Add Piped Progressive Video Streams
+  if (pdata && Array.isArray(pdata.videoStreams)) {
+    const progressive = pdata.videoStreams.filter((s: any) => !s?.videoOnly && typeof s?.url === 'string');
     for (const s of progressive) {
+      if (seenUrls.has(s.url)) continue;
+      seenUrls.add(s.url);
       const resLabel = String(s.quality || '360p');
       const clenMatch = String(s.url).match(/[?&]clen=(\d+)/);
       const clenBytes = clenMatch ? Number(clenMatch[1]) : null;
@@ -501,10 +714,106 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
         fps: s.fps || 30,
       });
     }
+  }
 
-    const aStreams: any[] = Array.isArray(pdata.audioStreams) ? pdata.audioStreams : [];
-    for (const a of aStreams.slice(0, 2)) {
-      if (typeof a?.url === 'string') {
+  // 5. Add on-demand resolution options from TheresaV AIO (480p, 240p, 144p, etc.)
+  if (tvAio?.result && Array.isArray(tvAio.result.medias)) {
+    const existingRes = new Set(
+      downloads.filter((d) => d.type === 'video').map((d) => String(d.resolution || '').toLowerCase())
+    );
+    for (const m of tvAio.result.medias) {
+      if (m?.type === 'video' && m?.quality) {
+        const qClean = String(m.quality).toLowerCase();
+        const resNum = qClean.replace(/[^0-9]/g, '');
+        if (resNum && !existingRes.has(`${resNum}p`) && ['1080', '720', '480', '360', '240'].includes(resNum)) {
+          existingRes.add(`${resNum}p`);
+          const directOrToken =
+            typeof m.url === 'string' && m.url.startsWith('http') && !m.url.includes('sse-progress')
+              ? m.url
+              : `theresav_resolve:ytmp4:${videoId}:${resNum}`;
+          const tier = Number(resNum) >= 1080 ? 'Full HD' : Number(resNum) >= 720 ? 'HD' : 'SD';
+          downloads.push({
+            id: `yt_${videoId}_aio_${resNum}p`,
+            type: 'video',
+            quality: `Video ${resNum}p ${tier} (MP4)`,
+            ext: 'mp4',
+            url: directOrToken,
+            resolution: `${resNum}p`,
+            vcodec: 'H.264',
+            acodec: 'AAC',
+            fps: 30,
+            needsResolve: directOrToken.startsWith('theresav_resolve:'),
+          });
+        }
+      }
+    }
+  }
+
+  // 6. If no video stream yet, fallback to GammaCloud MP4
+  if (!downloads.some((d) => d.type === 'video')) {
+    const gammaMp4Url = await resolveGammaCloudYouTube(videoId, 'mp4');
+    if (gammaMp4Url && !seenUrls.has(gammaMp4Url)) {
+      seenUrls.add(gammaMp4Url);
+      downloads.unshift({
+        id: `yt_${videoId}_mp4_hd`,
+        type: 'video',
+        quality: 'Video 720p HD · Direct Stream (MP4)',
+        ext: 'mp4',
+        url: gammaMp4Url,
+        filesizeFormatted: ytDurationSec ? formatBytes(ytDurationSec * 180000) : undefined,
+        resolution: '720p',
+        vcodec: 'H.264',
+        acodec: 'AAC',
+        fps: 30,
+      });
+    }
+  }
+
+  // 7. Add Audio Streams (Prioritizing TheresaV ytmp3 & CnvMP3/GammaCloud before Piped M4A)
+  if (tvMp3?.download_url && typeof tvMp3.download_url === 'string' && tvMp3.download_url.startsWith('http')) {
+    const mp3Dl = tvMp3.download_url;
+    seenUrls.add(mp3Dl);
+    const isSameSizeAsVideo =
+      tvMp4Hd?.filesize && tvMp3.filesize && Number(tvMp4Hd.filesize) === Number(tvMp3.filesize);
+    const audioBytes =
+      !isSameSizeAsVideo && typeof tvMp3.filesize === 'number' && tvMp3.filesize > 0
+        ? tvMp3.filesize
+        : ytDurationSec > 0
+          ? ytDurationSec * 16000
+          : null;
+    downloads.push({
+      id: `yt_${videoId}_tv_mp3`,
+      type: 'audio',
+      quality: `Audio Original HQ · ${ytTitle.slice(0, 38)} (MP3)`,
+      ext: 'mp3',
+      url: mp3Dl,
+      filesize: audioBytes,
+      filesizeFormatted: formatBytes(audioBytes),
+      acodec: 'MP3 / AAC',
+      resolution: '320kbps',
+    });
+  }
+
+  if (gammaMp3Url && !seenUrls.has(gammaMp3Url)) {
+    seenUrls.add(gammaMp3Url);
+    const estMp3Bytes = ytDurationSec > 0 ? ytDurationSec * 16000 : null;
+    downloads.push({
+      id: `yt_${videoId}_mp3_full`,
+      type: 'audio',
+      quality: `Audio 320kbps · ${ytTitle.slice(0, 38)} (MP3)`,
+      ext: 'mp3',
+      url: gammaMp3Url,
+      filesize: estMp3Bytes,
+      filesizeFormatted: formatBytes(estMp3Bytes),
+      acodec: 'MP3',
+      resolution: '320kbps',
+    });
+  }
+
+  if (pdata && Array.isArray(pdata.audioStreams)) {
+    for (const a of pdata.audioStreams.slice(0, 2)) {
+      if (typeof a?.url === 'string' && !seenUrls.has(a.url)) {
+        seenUrls.add(a.url);
         const abr = String(a.quality || '128kbps');
         const clenMatch = String(a.url).match(/[?&]clen=(\d+)/);
         const clenBytes = clenMatch ? Number(clenMatch[1]) : null;
@@ -523,54 +832,13 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
     }
   }
 
-  if (oe) {
-    if (ytTitle === 'YouTube Video HD' && oe.title) ytTitle = oe.title;
-    if (ytAuthor === 'YouTube Creator' && oe.author_name) ytAuthor = oe.author_name;
-    if (!ytAuthorUrl && oe.author_url) ytAuthorUrl = oe.author_url;
-    if (oe.thumbnail_url && !pdata?.thumbnailUrl) ytThumb = oe.thumbnail_url;
-  }
-
-  // If Piped did not return a progressive video stream, resolve MP4 via GammaCloud
-  if (!downloads.some((d) => d.type === 'video')) {
-    const gammaMp4Url = await resolveGammaCloudYouTube(videoId, 'mp4');
-    if (gammaMp4Url) {
-      downloads.unshift({
-        id: `yt_${videoId}_mp4_hd`,
-        type: 'video',
-        quality: 'Video 720p HD · Direct Stream (MP4)',
-        ext: 'mp4',
-        url: gammaMp4Url,
-        filesizeFormatted: ytDurationSec ? formatBytes(ytDurationSec * 180000) : undefined,
-        resolution: '720p',
-        vcodec: 'H.264',
-        acodec: 'AAC',
-        fps: 30,
-      });
-    }
-  }
-
-  // Always add real GammaCloud MP3 stream as top audio stream
-  if (gammaMp3Url) {
-    const estMp3Bytes = ytDurationSec > 0 ? ytDurationSec * 16000 : null;
-    downloads.push({
-      id: `yt_${videoId}_mp3_full`,
-      type: 'audio',
-      quality: `Audio Original · ${ytTitle.slice(0, 42)} (MP3)`,
-      ext: 'mp3',
-      url: gammaMp3Url,
-      filesize: estMp3Bytes,
-      filesizeFormatted: formatBytes(estMp3Bytes),
-      acodec: 'MP3',
-      resolution: '320kbps',
-    });
-  } else if (downloads.some((d) => d.type === 'video') && !downloads.some((d) => d.type === 'audio')) {
-    // Use the progressive muxed MP4 stream's audio track (decoded natively by HTML5 <audio>)
+  if (downloads.some((d) => d.type === 'video') && !downloads.some((d) => d.type === 'audio')) {
     const firstVideo = downloads.find((d) => d.type === 'video');
     if (firstVideo) {
       downloads.push({
         id: `yt_${videoId}_aud_muxed`,
         type: 'audio',
-        quality: `Audio Original · ${ytTitle.slice(0, 42)} (M4A)`,
+        quality: `Audio Original · ${ytTitle.slice(0, 38)} (M4A)`,
         ext: 'm4a',
         url: firstVideo.url,
         filesizeFormatted: firstVideo.filesizeFormatted,
@@ -594,7 +862,7 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
     extractorKey: 'TinaCore::YouTube',
     engine: 'Tina Hybrid',
     serverUsed: 'Tina Hybrid Core (YOUTUBE)',
-    webpageUrl: `https://www.youtube.com/watch?v=${videoId}`,
+    webpageUrl: canonicalYtUrl,
     thumbnail: ytThumb,
     duration: ytDuration,
     durationSeconds: ytDurationSec || undefined,
@@ -736,7 +1004,8 @@ function normalizePrimaryExtractorOutput(raw: any, targetUrl: string) {
       rawUrl.startsWith('spotidown_resolve:') ||
       rawUrl.startsWith('applemusic_resolve:') ||
       rawUrl.startsWith('youtube_resolve:') ||
-      rawUrl.startsWith('ytmp3gg_resolve:');
+      rawUrl.startsWith('ytmp3gg_resolve:') ||
+      rawUrl.startsWith('theresav_resolve:');
 
     const rawTypeStr = String(d.type || '').trim();
     const rawQualStr = String(d.quality || d.label || d.resolution || '').trim();
@@ -1265,11 +1534,18 @@ async function startServer() {
         finalMetadata = deepMeta;
       }
 
+      if (!finalMetadata || !Array.isArray(finalMetadata.downloads) || finalMetadata.downloads.length === 0) {
+        const aioBackup = await fetchTheresaVAioMedia(cleanTargetUrl);
+        if (aioBackup) {
+          finalMetadata = aioBackup;
+        }
+      }
+
       if (!finalMetadata) {
         throw new Error('Tidak dapat mengekstrak media dari tautan tersebut.');
       }
 
-      // If Spotify only has a 30s preview because SpotiDown was unavailable, resolve full-track MP3 via YouTube Audio Match
+      // If Spotify only has a 30s preview because SpotiDown was unavailable, resolve full-track MP3 via TheresaV / YouTube Audio Match
       if (
         finalMetadata.platform === 'spotify' &&
         Array.isArray(finalMetadata.downloads) &&
@@ -1280,7 +1556,17 @@ async function startServer() {
         const searchQuery = `${finalMetadata.title || ''} Official Audio`.trim();
         const matchedYtId = await searchYouTubeVideoId(searchQuery);
         if (matchedYtId) {
-          const fullMp3Url = await resolveGammaCloudYouTube(matchedYtId, 'mp3');
+          const [tvMp3Settled, gammaMp3Settled] = await Promise.allSettled([
+            fetchTheresaVEndpoint('ytmp3', `https://www.youtube.com/watch?v=${matchedYtId}`, '', 12000),
+            resolveGammaCloudYouTube(matchedYtId, 'mp3'),
+          ]);
+          const tvMp3Url =
+            tvMp3Settled.status === 'fulfilled' && tvMp3Settled.value?.download_url
+              ? String(tvMp3Settled.value.download_url)
+              : null;
+          const gammaUrl =
+            gammaMp3Settled.status === 'fulfilled' ? gammaMp3Settled.value : null;
+          const fullMp3Url = gammaUrl || tvMp3Url;
           if (fullMp3Url) {
             finalMetadata.downloads.unshift({
               id: `sp_full_320_${matchedYtId}`,
@@ -1554,7 +1840,7 @@ async function startServer() {
   app.get('/api/proxy-stream', async (req: Request, res: Response) => {
     const targetUrl = String(req.query.url || '');
     const extHint = String(req.query.ext || '').toLowerCase();
-    if (!targetUrl || !/^https?:\/\/.+/i.test(targetUrl)) {
+    if (!targetUrl || (!/^https?:\/\/.+/i.test(targetUrl) && !targetUrl.includes('_resolve:'))) {
       return res.status(400).send('Invalid stream URL');
     }
 
@@ -1564,7 +1850,8 @@ async function startServer() {
         finalUrl.startsWith('spotidown_resolve:') ||
         finalUrl.startsWith('applemusic_resolve:') ||
         finalUrl.startsWith('youtube_resolve:') ||
-        finalUrl.startsWith('ytmp3gg_resolve:')
+        finalUrl.startsWith('ytmp3gg_resolve:') ||
+        finalUrl.startsWith('theresav_resolve:')
       ) {
         finalUrl = await resolveUrl(finalUrl);
       }
@@ -1576,7 +1863,6 @@ async function startServer() {
         return res.status(502).send('Gagal memuat stream media.');
       }
 
-      res.status(upstream.status);
       const upstreamType = upstream.headers.get('content-type');
       const inferredExt =
         extHint ||
@@ -1584,10 +1870,10 @@ async function startServer() {
           ? 'mp3'
           : finalUrl.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i)?.[1] || 'mp4');
 
-      const contentType = getExplicitMimeType(inferredExt, upstreamType);
+      let contentType = getExplicitMimeType(inferredExt, upstreamType);
       const contentLength = upstream.headers.get('content-length');
       let contentRange = upstream.headers.get('content-range');
-      const acceptRanges = upstream.headers.get('accept-ranges') || 'bytes';
+      const upstreamAcceptRanges = upstream.headers.get('accept-ranges');
 
       // Fix malformed Content-Range from proxy.piped.private.coffee when closed Range is requested
       const clenMatch = finalUrl.match(/[?&]clen=(\d+)/);
@@ -1602,13 +1888,10 @@ async function startServer() {
         }
       }
 
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Accept-Ranges', acceptRanges);
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      if (contentLength) res.setHeader('Content-Length', contentLength);
-      if (contentRange) res.setHeader('Content-Range', contentRange);
-
       if (!upstream.body) {
+        res.status(upstream.status);
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Access-Control-Allow-Origin', '*');
         return res.end();
       }
 
@@ -1617,10 +1900,41 @@ async function startServer() {
         reader.cancel().catch(() => {});
       });
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) res.write(Buffer.from(value));
+      // Read first chunk to inspect container magic bytes (e.g. ftypdash / ftypisom served with audio/mpeg)
+      const firstRead = await reader.read();
+      const firstBuf = firstRead.value ? Buffer.from(firstRead.value) : null;
+
+      if (firstBuf && firstBuf.length >= 12) {
+        const boxMagic = firstBuf.subarray(4, 8).toString('ascii');
+        const headerAscii = firstBuf.subarray(0, 32).toString('ascii');
+        if (boxMagic === 'ftyp') {
+          if (headerAscii.includes('avc1') && inferredExt !== 'mp3' && inferredExt !== 'm4a') {
+            contentType = 'video/mp4';
+          } else if (contentType === 'audio/mpeg') {
+            contentType = headerAscii.includes('avc1') ? 'video/mp4' : 'audio/mp4';
+          }
+        }
+      }
+
+      res.status(upstream.status);
+      res.setHeader('Content-Type', contentType);
+      if (upstream.status === 206 || upstreamAcceptRanges === 'bytes' || clenMatch) {
+        res.setHeader('Accept-Ranges', 'bytes');
+      }
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      if (contentLength) res.setHeader('Content-Length', contentLength);
+      if (contentRange) res.setHeader('Content-Range', contentRange);
+
+      if (firstBuf) {
+        res.write(firstBuf);
+      }
+
+      if (!firstRead.done) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) res.write(Buffer.from(value));
+        }
       }
       res.end();
     } catch {
@@ -1634,7 +1948,7 @@ async function startServer() {
     const rawName = String(req.query.filename || req.params.filename || 'Tina_Media');
     const rawExt = String(req.query.ext || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-    if (!targetUrl || !/^https?:\/\/.+/i.test(targetUrl)) {
+    if (!targetUrl || (!/^https?:\/\/.+/i.test(targetUrl) && !targetUrl.includes('_resolve:'))) {
       return res.status(400).json({ error: 'URL unduhan tidak valid.' });
     }
 
@@ -1664,7 +1978,8 @@ async function startServer() {
         finalUrl.startsWith('spotidown_resolve:') ||
         finalUrl.startsWith('applemusic_resolve:') ||
         finalUrl.startsWith('youtube_resolve:') ||
-        finalUrl.startsWith('ytmp3gg_resolve:')
+        finalUrl.startsWith('ytmp3gg_resolve:') ||
+        finalUrl.startsWith('theresav_resolve:')
       ) {
         finalUrl = await resolveUrl(finalUrl);
       }

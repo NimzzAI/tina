@@ -250,6 +250,14 @@ export function V10VideoPlayer({
     'HD';
 
   const resolvedVideoSrc = (() => {
+    if (
+      activeStream.needsResolve ||
+      activeStream.url.startsWith('theresav_resolve:') ||
+      activeStream.url.startsWith('youtube_resolve:') ||
+      activeStream.url.startsWith('ytmp3gg_resolve:')
+    ) {
+      return `/api/proxy-stream?url=${encodeURIComponent(activeStream.url)}&ext=mp4`;
+    }
     const base = buildStreamUrl(activeStream.url);
     if (fallbackStage === 0) return base;
     if (base.startsWith('/api/proxy-stream')) return activeStream.url;
@@ -661,7 +669,7 @@ export function V10AudioPlayer({
   onDownload,
   buildStreamUrl,
 }: V10AudioPlayerProps) {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioRef = useRef<HTMLVideoElement | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(() => parseDurationHintSeconds(durationHint));
@@ -684,7 +692,8 @@ export function V10AudioPlayer({
       stream.url.startsWith('spotidown_resolve:') ||
       stream.url.startsWith('applemusic_resolve:') ||
       stream.url.startsWith('youtube_resolve:') ||
-      stream.url.startsWith('ytmp3gg_resolve:')
+      stream.url.startsWith('ytmp3gg_resolve:') ||
+      stream.url.startsWith('theresav_resolve:')
     ) {
       fetch('/api/resolve', {
         method: 'POST',
@@ -707,7 +716,8 @@ export function V10AudioPlayer({
       stream.url.startsWith('spotidown_resolve:') ||
       stream.url.startsWith('applemusic_resolve:') ||
       stream.url.startsWith('youtube_resolve:') ||
-      stream.url.startsWith('ytmp3gg_resolve:')
+      stream.url.startsWith('ytmp3gg_resolve:') ||
+      stream.url.startsWith('theresav_resolve:')
     ) {
       return `/api/proxy-stream?url=${encodeURIComponent(stream.url)}&ext=${stream.ext || 'mp3'}`;
     }
@@ -756,10 +766,12 @@ export function V10AudioPlayer({
         compact ? 'p-3' : 'p-5'
       }`}
     >
-      <audio
+      <video
         ref={audioRef}
         src={effectiveAudioSrc}
+        playsInline
         preload="metadata"
+        className="hidden"
         onError={() => {
           if (fallbackStage < 1) {
             setFallbackStage((prev) => prev + 1);

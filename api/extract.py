@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler
 import http.cookiejar
 import json
@@ -18,7 +19,7 @@ CHROME_UA = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 
-FULL_LENGTH_FALLBACK_MP3 = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+THERESAV_API_KEY = "ntzckofficial"
 
 FEATURED_SITES = [
     {"name": "TikTok", "description": "Video 1080p/720p Tanpa Watermark, Audio MP3, & Galeri Foto Slideshow", "category": "Sosial & Video"},
@@ -365,7 +366,7 @@ def fetch_spotidown_full_mp3(target_url: str):
         return None
 
 
-def resolve_gammacloud_youtube(video_id: str, fmt: str = "mp3"):
+def resolve_gammacloud_youtube(video_id: str, fmt: str = "mp3", fast_cache_only: bool = False):
     """Resolves real YouTube MP3 or MP4 stream via CnvMP3 cache or GammaCloud converter."""
     fmt_clean = "mp4" if fmt.lower() == "mp4" else "mp3"
     # 1. Fast check on CnvMP3 pre-cached database
@@ -387,13 +388,16 @@ def resolve_gammacloud_youtube(video_id: str, fmt: str = "mp3"):
                 "Referer": "https://cnvmp3.com/v55",
             },
         )
-        with urllib.request.urlopen(cnv_req, timeout=4) as cnv_resp:
+        with urllib.request.urlopen(cnv_req, timeout=3.5) as cnv_resp:
             cnv_json = json.loads(cnv_resp.read().decode("utf-8", errors="ignore"))
         server_path = (cnv_json.get("data") or {}).get("server_path")
         if not cnv_json.get("error") and isinstance(server_path, str) and server_path.startswith("http"):
             return server_path
     except Exception:
         pass
+
+    if fast_cache_only:
+        return None
 
     # 2. GammaCloud Direct Converter (ytmp3.as -> ytmp3.gl -> gamma.gammacloud.net)
     try:
@@ -478,6 +482,121 @@ def search_youtube_video_id(query: str):
         return None
 
 
+def fetch_theresav_endpoint(endpoint: str, target_url: str, extra_query: str = "", timeout_sec: int = 14):
+    try:
+        api_url = (
+            f"https://api.theresav.eu/api/download/{endpoint}"
+            f"?url={urllib.parse.quote(target_url, safe='')}{extra_query}"
+        )
+        req = urllib.request.Request(
+            api_url,
+            headers={
+                "User-Agent": CHROME_UA,
+                "x-apikey": THERESAV_API_KEY,
+                "Accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+        if not data or data.get("status") is False:
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def fetch_theresav_aio(target_url: str):
+    aio = fetch_theresav_endpoint("aio", target_url, "", 15)
+    res = (aio or {}).get("result")
+    if not isinstance(res, dict):
+        return None
+
+    raw_medias = res.get("medias") or []
+    downloads = []
+    images = []
+    seen_urls = set()
+
+    for idx, m in enumerate(raw_medias):
+        if not isinstance(m, dict):
+            continue
+        u = str(m.get("url") or "").strip()
+        if not u.startswith("http") or u in seen_urls:
+            continue
+        if "zm.io.vn/sse-progress" in u or "cdn-spotify-inter.zm.io.vn" in u:
+            continue
+        seen_urls.add(u)
+
+        m_type = str(m.get("type") or "video").lower()
+        ext = str(m.get("ext") or ("mp3" if m_type == "audio" else "jpg" if m_type == "image" else "mp4")).lower()
+        qual = str(m.get("quality") or "HD").strip()
+        size_str = str(m.get("size")) if m.get("size") and m.get("size") != "-" else None
+
+        if m_type == "image" or ext in ("jpg", "jpeg", "png", "webp"):
+            images.append(u)
+            downloads.append(
+                {
+                    "id": f"tv_aio_img_{idx + 1}",
+                    "type": "image",
+                    "quality": f"Foto Slide #{len(images)} · Resolusi Penuh ({ext.upper()})",
+                    "ext": ext,
+                    "url": u,
+                    "filesizeFormatted": size_str,
+                    "resolution": "Full HD",
+                }
+            )
+        elif m_type == "audio" or ext in ("mp3", "m4a", "ogg", "wav", "opus"):
+            downloads.append(
+                {
+                    "id": f"tv_aio_aud_{idx + 1}",
+                    "type": "audio",
+                    "quality": f"Audio {qual} ({ext.upper()})",
+                    "ext": ext,
+                    "url": u,
+                    "filesizeFormatted": size_str,
+                    "acodec": "MP3" if ext == "mp3" else "AAC",
+                    "resolution": qual,
+                }
+            )
+        else:
+            clean_label = re.sub(r"\bno_watermark\b", "Tanpa Watermark", qual, flags=re.I).replace("_", " ")
+            res_m = re.search(r"(\d{3,4}p)", qual, re.I)
+            downloads.append(
+                {
+                    "id": f"tv_aio_vid_{idx + 1}",
+                    "type": "video",
+                    "quality": f"Video {clean_label} ({ext.upper()})",
+                    "ext": "mp4",
+                    "url": u,
+                    "filesizeFormatted": size_str,
+                    "vcodec": "H.264",
+                    "acodec": "AAC",
+                    "resolution": res_m.group(1) if res_m else "HD",
+                }
+            )
+
+    if not downloads:
+        return None
+
+    plat = str(res.get("platform") or "media").lower()
+    return {
+        "title": res.get("title") or "Media Stream HD",
+        "author": res.get("author") or res.get("platform") or "Creator",
+        "platform": plat,
+        "extractorKey": "TinaCore::TheresaVAIO",
+        "engine": "Tina Hybrid",
+        "serverUsed": f"Tina Hybrid Core ({plat.upper()})",
+        "webpageUrl": res.get("source") or target_url,
+        "thumbnail": res.get("thumbnail") or (images[0] if images else ""),
+        "duration": str(res.get("duration") or ""),
+        "uploadDate": time.strftime("%Y-%m-%d"),
+        "resolution": f"{len(images)} Foto HD" if images else (downloads[0].get("resolution") or "1080p HD"),
+        "vcodec": None if images else "H.264 (AVC1)",
+        "acodec": "AAC / MP3",
+        "downloads": downloads,
+        "images": images if images else None,
+    }
+
+
 def fetch_spotify_rich(target_url: str):
     m = re.search(r"spotify\.com/(?:intl-[a-z-]+/)?(track|episode)/([A-Za-z0-9]+)", target_url, re.I)
     kind = m.group(1).lower() if m else "track"
@@ -534,13 +653,19 @@ def fetch_spotify_rich(target_url: str):
     except Exception:
         pass
 
-    # 2. Resolve Full-Length MP3 Stream via SpotiDown or YouTube Audio Match
+    # 2. Resolve Full-Length MP3 Stream via SpotiDown, TheresaV ytmp3, or GammaCloud/CnvMP3
     spoti_full = fetch_spotidown_full_mp3(f"https://open.spotify.com/{kind}/{item_id}")
     primary_mp3_url = (spoti_full or {}).get("mp3_url")
     if not primary_mp3_url:
         yt_match_id = search_youtube_video_id(f"{author} {title} Official Audio")
         if yt_match_id:
             primary_mp3_url = resolve_gammacloud_youtube(yt_match_id, "mp3")
+            if not primary_mp3_url:
+                tv_mp3 = fetch_theresav_endpoint(
+                    "ytmp3", f"https://www.youtube.com/watch?v={yt_match_id}", "", 12
+                )
+                if tv_mp3 and isinstance(tv_mp3.get("download_url"), str):
+                    primary_mp3_url = tv_mp3["download_url"]
     if not primary_mp3_url:
         primary_mp3_url = preview_url
 
@@ -621,6 +746,26 @@ def fetch_spotify_rich(target_url: str):
     }
 
 
+def _fetch_piped_json(video_id: str):
+    try:
+        api_url = f"https://api.piped.private.coffee/streams/{video_id}"
+        req = urllib.request.Request(api_url, headers={"User-Agent": CHROME_UA, "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=7) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="ignore"))
+    except Exception:
+        return None
+
+
+def _fetch_yt_oembed(video_id: str):
+    try:
+        oe_url = f"https://www.youtube.com/oembed?url={urllib.parse.quote(f'https://www.youtube.com/watch?v={video_id}')}&format=json"
+        req = urllib.request.Request(oe_url, headers={"User-Agent": CHROME_UA})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="ignore"))
+    except Exception:
+        return None
+
+
 def fetch_youtube_rich(target_url: str):
     m = re.search(
         r"(?:youtube\.com/(?:[^/]+/.+/|(?:v|e(?:mbed)?|shorts|live)/|.*[?&]v=)|youtu\.be/)([^\"&?/\s]{11})",
@@ -630,6 +775,7 @@ def fetch_youtube_rich(target_url: str):
     if not m:
         return None
     video_id = m.group(1)
+    canonical_yt_url = f"https://www.youtube.com/watch?v={video_id}"
 
     title = "YouTube Video HD"
     author = "YouTube Creator"
@@ -641,90 +787,191 @@ def fetch_youtube_rich(target_url: str):
     view_count = None
     like_count = None
     downloads = []
+    seen_urls = set()
 
-    # 1. Try Piped Streams API (includes proxy.piped.private.coffee streams)
-    try:
-        api_url = f"https://api.piped.private.coffee/streams/{video_id}"
-        req = urllib.request.Request(
-            api_url,
-            headers={"User-Agent": CHROME_UA, "Accept": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            pdata = json.loads(resp.read().decode("utf-8"))
-        if pdata and pdata.get("title"):
+    # Run TheresaV (ytmp4 1080p, ytmp4 360p, ytmp3, ytdl, aio), Piped, oEmbed, and CnvMP3 concurrently
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        f_mp4_hd = pool.submit(fetch_theresav_endpoint, "ytmp4", target_url, "&resolution=1080", 15)
+        f_mp4_sd = pool.submit(fetch_theresav_endpoint, "ytmp4", target_url, "&resolution=360", 13)
+        f_mp3 = pool.submit(fetch_theresav_endpoint, "ytmp3", target_url, "", 15)
+        f_ytdl = pool.submit(fetch_theresav_endpoint, "ytdl", target_url, "", 13)
+        f_aio = pool.submit(fetch_theresav_endpoint, "aio", target_url, "", 13)
+        f_piped = pool.submit(_fetch_piped_json, video_id)
+        f_oembed = pool.submit(_fetch_yt_oembed, video_id)
+        f_gamma_mp3 = pool.submit(resolve_gammacloud_youtube, video_id, "mp3", True)
+
+        tv_mp4_hd = f_mp4_hd.result()
+        tv_mp4_sd = f_mp4_sd.result()
+        tv_mp3 = f_mp3.result()
+        tv_ytdl = f_ytdl.result()
+        tv_aio = f_aio.result()
+        pdata = f_piped.result()
+        oe = f_oembed.result()
+        gamma_mp3 = f_gamma_mp3.result()
+
+    if not (isinstance(tv_mp3, dict) and tv_mp3.get("download_url")) and not gamma_mp3:
+        gamma_mp3 = resolve_gammacloud_youtube(video_id, "mp3", False)
+
+    # 1. Populate Metadata from TheresaV
+    tv_primary = tv_mp4_hd or tv_mp3 or tv_mp4_sd or tv_ytdl
+    if isinstance(tv_primary, dict):
+        title = tv_primary.get("title") or title
+        author = tv_primary.get("channel") or author
+        thumb = tv_primary.get("thumbnail") or thumb
+        if isinstance(tv_primary.get("duration_sec"), (int, float)) and tv_primary["duration_sec"] > 0:
+            duration_sec = int(tv_primary["duration_sec"])
+            duration_str = format_duration(duration_sec) or duration_str
+        if isinstance(tv_primary.get("view_count"), int):
+            view_count = tv_primary["view_count"]
+        if isinstance(tv_primary.get("like_count"), int):
+            like_count = tv_primary["like_count"]
+        if tv_primary.get("upload_date"):
+            upload_date = str(tv_primary["upload_date"])
+
+    if isinstance(tv_ytdl, dict) and isinstance(tv_ytdl.get("result"), dict):
+        r = tv_ytdl["result"]
+        if title == "YouTube Video HD" and r.get("title"):
+            title = r["title"]
+        if not duration_sec and isinstance(r.get("duration"), (int, float)) and r["duration"] > 0:
+            duration_sec = int(r["duration"])
+            duration_str = format_duration(duration_sec) or str(r.get("duration_formatted") or "")
+        if not duration_str and r.get("duration_formatted"):
+            duration_str = str(r["duration_formatted"])
+        if r.get("thumbnail") and "maxresdefault" in thumb:
+            thumb = r["thumbnail"]
+
+    if isinstance(tv_aio, dict) and isinstance(tv_aio.get("result"), dict):
+        ar = tv_aio["result"]
+        if title == "YouTube Video HD" and ar.get("title"):
+            title = ar["title"]
+        if not duration_str and ar.get("duration"):
+            duration_str = str(ar["duration"])
+        if ar.get("thumbnail") and "maxresdefault" in thumb:
+            thumb = ar["thumbnail"]
+
+    # 2. Enrich with Piped & oEmbed
+    if isinstance(pdata, dict) and pdata.get("title"):
+        if title == "YouTube Video HD":
             title = pdata.get("title") or title
+        if author == "YouTube Creator":
             author = pdata.get("uploader") or author
-            if pdata.get("uploaderUrl"):
-                author_url = f"https://www.youtube.com{pdata['uploaderUrl']}"
-            if pdata.get("thumbnailUrl"):
-                thumb = pdata["thumbnailUrl"]
-            if pdata.get("duration"):
-                duration_sec = int(pdata["duration"])
-                duration_str = format_duration(duration_sec) or duration_str
-            if pdata.get("uploadDate"):
-                upload_date = str(pdata["uploadDate"])[:10]
-            if isinstance(pdata.get("views"), int):
-                view_count = pdata["views"]
-            if isinstance(pdata.get("likes"), int):
-                like_count = pdata["likes"]
+        if pdata.get("uploaderUrl"):
+            author_url = f"https://www.youtube.com{pdata['uploaderUrl']}"
+        if pdata.get("thumbnailUrl") and "maxresdefault" in thumb:
+            thumb = pdata["thumbnailUrl"]
+        if not duration_sec and pdata.get("duration"):
+            duration_sec = int(pdata["duration"])
+            duration_str = format_duration(duration_sec) or duration_str
+        if pdata.get("uploadDate"):
+            upload_date = str(pdata["uploadDate"])[:10]
+        if view_count is None and isinstance(pdata.get("views"), int):
+            view_count = pdata["views"]
+        if like_count is None and isinstance(pdata.get("likes"), int):
+            like_count = pdata["likes"]
 
-            v_streams = pdata.get("videoStreams") or []
-            progressive = [s for s in v_streams if not s.get("videoOnly") and s.get("url")]
-            for s in progressive:
-                res = s.get("quality") or "360p"
-                fps_val = s.get("fps") or 30
-                m_clen = re.search(r"[?&]clen=(\d+)", s["url"])
-                est_bytes = int(m_clen.group(1)) if m_clen else int(((s.get("bitrate") or 900000) / 8) * (duration_sec or 240))
-                downloads.append(
-                    {
-                        "id": f"yt_{video_id}_{res}",
-                        "type": "video",
-                        "quality": f"Video {res} {'Full HD' if '1080' in res else 'HD' if '720' in res else 'SD'} (MP4)",
-                        "ext": "mp4",
-                        "url": s["url"],
-                        "filesizeFormatted": format_bytes(est_bytes),
-                        "resolution": res,
-                        "vcodec": "H.264",
-                        "acodec": "AAC",
-                        "fps": fps_val,
-                    }
-                )
+    if isinstance(oe, dict):
+        if title == "YouTube Video HD" and oe.get("title"):
+            title = oe["title"]
+        if author == "YouTube Creator" and oe.get("author_name"):
+            author = oe["author_name"]
+        if not author_url and oe.get("author_url"):
+            author_url = oe["author_url"]
+        if oe.get("thumbnail_url") and "maxresdefault" in thumb:
+            thumb = oe["thumbnail_url"]
 
-            a_streams = pdata.get("audioStreams") or []
-            for a in [x for x in a_streams if x.get("url")][:2]:
-                abr = a.get("quality") or "128kbps"
-                downloads.append(
-                    {
-                        "id": f"yt_{video_id}_aud_{abr}",
-                        "type": "audio",
-                        "quality": f"Audio Stream {abr} (M4A)",
-                        "ext": "m4a",
-                        "url": a["url"],
-                        "acodec": "AAC",
-                        "resolution": abr,
-                    }
-                )
-    except Exception:
-        pass
+    # 3. Add Primary Video Streams from TheresaV (ytmp4 1080p/720p, ytdl top-level, ytmp4 360p)
+    def add_tv_video(tv_obj, fallback_res, suffix):
+        if not isinstance(tv_obj, dict):
+            return
+        dl = tv_obj.get("download_url")
+        if isinstance(dl, str) and dl.startswith("http") and dl not in seen_urls:
+            seen_urls.add(dl)
+            raw_res = str(tv_obj.get("resolution") or fallback_res).rstrip("pP")
+            res_label = f"{raw_res}p"
+            fsize = tv_obj.get("filesize") if isinstance(tv_obj.get("filesize"), int) else None
+            tier = "Full HD" if raw_res.isdigit() and int(raw_res) >= 1080 else ("HD" if raw_res.isdigit() and int(raw_res) >= 720 else "SD")
+            downloads.append(
+                {
+                    "id": f"yt_{video_id}_tv_{suffix}_{res_label}",
+                    "type": "video",
+                    "quality": f"Video {res_label} {tier} · Direct Stream (MP4)",
+                    "ext": "mp4",
+                    "url": dl,
+                    "filesizeFormatted": format_bytes(fsize),
+                    "resolution": res_label,
+                    "vcodec": "H.264",
+                    "acodec": "AAC",
+                    "fps": 30,
+                }
+            )
 
-    # 2. Enrich with YouTube Official oEmbed if title is still generic
-    if title == "YouTube Video HD":
-        try:
-            oe_url = f"https://www.youtube.com/oembed?url={urllib.parse.quote(f'https://www.youtube.com/watch?v={video_id}')}&format=json"
-            req = urllib.request.Request(oe_url, headers={"User-Agent": CHROME_UA})
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                oe = json.loads(resp.read().decode("utf-8"))
-                title = oe.get("title") or title
-                author = oe.get("author_name") or author
-                author_url = oe.get("author_url") or author_url
-                thumb = oe.get("thumbnail_url") or thumb
-        except Exception:
-            pass
+    add_tv_video(tv_mp4_hd, "720", "hd")
+    if isinstance(tv_ytdl, dict) and tv_ytdl.get("download_url"):
+        add_tv_video(tv_ytdl, "720", "ytdl")
+    add_tv_video(tv_mp4_sd, "360", "sd")
 
-    # 3. Resolve direct MP4 via GammaCloud if Piped did not provide video
+    # 4. Add Piped Progressive Video Streams
+    if isinstance(pdata, dict):
+        v_streams = pdata.get("videoStreams") or []
+        progressive = [s for s in v_streams if not s.get("videoOnly") and s.get("url")]
+        for s in progressive:
+            if s["url"] in seen_urls:
+                continue
+            seen_urls.add(s["url"])
+            res = s.get("quality") or "360p"
+            fps_val = s.get("fps") or 30
+            m_clen = re.search(r"[?&]clen=(\d+)", s["url"])
+            est_bytes = int(m_clen.group(1)) if m_clen else int(((s.get("bitrate") or 900000) / 8) * (duration_sec or 240))
+            downloads.append(
+                {
+                    "id": f"yt_{video_id}_{res}",
+                    "type": "video",
+                    "quality": f"Video {res} {'Full HD' if '1080' in res else 'HD' if '720' in res else 'SD'} (MP4)",
+                    "ext": "mp4",
+                    "url": s["url"],
+                    "filesizeFormatted": format_bytes(est_bytes),
+                    "resolution": res,
+                    "vcodec": "H.264",
+                    "acodec": "AAC",
+                    "fps": fps_val,
+                }
+            )
+
+    # 5. Add on-demand resolution options from TheresaV AIO (480p, 240p, etc.)
+    if isinstance(tv_aio, dict) and isinstance(tv_aio.get("result"), dict):
+        existing_res = {str(d.get("resolution") or "").lower() for d in downloads if d.get("type") == "video"}
+        for m_item in tv_aio["result"].get("medias") or []:
+            if isinstance(m_item, dict) and m_item.get("type") == "video" and m_item.get("quality"):
+                res_num = re.sub(r"[^0-9]", "", str(m_item["quality"]))
+                if res_num in ("1080", "720", "480", "360", "240") and f"{res_num}p" not in existing_res:
+                    existing_res.add(f"{res_num}p")
+                    raw_u = str(m_item.get("url") or "")
+                    direct_or_token = (
+                        raw_u
+                        if (raw_u.startswith("http") and "sse-progress" not in raw_u)
+                        else f"theresav_resolve:ytmp4:{video_id}:{res_num}"
+                    )
+                    tier = "Full HD" if int(res_num) >= 1080 else ("HD" if int(res_num) >= 720 else "SD")
+                    downloads.append(
+                        {
+                            "id": f"yt_{video_id}_aio_{res_num}p",
+                            "type": "video",
+                            "quality": f"Video {res_num}p {tier} (MP4)",
+                            "ext": "mp4",
+                            "url": direct_or_token,
+                            "resolution": f"{res_num}p",
+                            "vcodec": "H.264",
+                            "acodec": "AAC",
+                            "fps": 30,
+                            "needsResolve": direct_or_token.startswith("theresav_resolve:"),
+                        }
+                    )
+
+    # 6. Fallback to GammaCloud MP4 if no video stream yet
     if not any(d.get("type") == "video" for d in downloads):
         gamma_mp4 = resolve_gammacloud_youtube(video_id, "mp4")
-        if gamma_mp4:
+        if gamma_mp4 and gamma_mp4 not in seen_urls:
+            seen_urls.add(gamma_mp4)
             downloads.insert(
                 0,
                 {
@@ -741,14 +988,41 @@ def fetch_youtube_rich(target_url: str):
                 },
             )
 
-    # 4. Always resolve real MP3 audio stream for this exact YouTube video via GammaCloud/CnvMP3
-    gamma_mp3 = resolve_gammacloud_youtube(video_id, "mp3")
-    if gamma_mp3:
+    # 7. Add Audio Streams (Prioritizing TheresaV ytmp3 & CnvMP3/GammaCloud before Piped M4A)
+    if isinstance(tv_mp3, dict) and isinstance(tv_mp3.get("download_url"), str) and tv_mp3["download_url"].startswith("http"):
+        mp3_dl = tv_mp3["download_url"]
+        seen_urls.add(mp3_dl)
+        same_as_vid = (
+            isinstance(tv_mp4_hd, dict)
+            and tv_mp4_hd.get("filesize")
+            and tv_mp3.get("filesize")
+            and tv_mp4_hd.get("filesize") == tv_mp3.get("filesize")
+        )
+        aud_bytes = (
+            tv_mp3.get("filesize")
+            if (not same_as_vid and isinstance(tv_mp3.get("filesize"), int) and tv_mp3["filesize"] > 0)
+            else (duration_sec * 16000 if duration_sec else None)
+        )
+        downloads.append(
+            {
+                "id": f"yt_{video_id}_tv_mp3",
+                "type": "audio",
+                "quality": f"Audio Original HQ · {title[:38]} (MP3)",
+                "ext": "mp3",
+                "url": mp3_dl,
+                "filesizeFormatted": format_bytes(aud_bytes),
+                "acodec": "MP3 / AAC",
+                "resolution": "320kbps",
+            }
+        )
+
+    if gamma_mp3 and gamma_mp3 not in seen_urls:
+        seen_urls.add(gamma_mp3)
         downloads.append(
             {
                 "id": f"yt_{video_id}_mp3",
                 "type": "audio",
-                "quality": f"Audio Original · {title[:42]} (MP3)",
+                "quality": f"Audio 320kbps · {title[:38]} (MP3)",
                 "ext": "mp3",
                 "url": gamma_mp3,
                 "filesizeFormatted": format_bytes(duration_sec * 16000) if duration_sec else None,
@@ -756,13 +1030,33 @@ def fetch_youtube_rich(target_url: str):
                 "resolution": "320kbps",
             }
         )
-    elif any(d.get("type") == "video" for d in downloads) and not any(d.get("type") == "audio" for d in downloads):
+
+    if isinstance(pdata, dict):
+        a_streams = pdata.get("audioStreams") or []
+        for a in [x for x in a_streams if x.get("url")][:2]:
+            if a["url"] in seen_urls:
+                continue
+            seen_urls.add(a["url"])
+            abr = a.get("quality") or "128kbps"
+            downloads.append(
+                {
+                    "id": f"yt_{video_id}_aud_{abr}",
+                    "type": "audio",
+                    "quality": f"Audio Stream {abr} (M4A)",
+                    "ext": "m4a",
+                    "url": a["url"],
+                    "acodec": "AAC",
+                    "resolution": abr,
+                }
+            )
+
+    if any(d.get("type") == "video" for d in downloads) and not any(d.get("type") == "audio" for d in downloads):
         first_vid = next(d for d in downloads if d.get("type") == "video")
         downloads.append(
             {
                 "id": f"yt_{video_id}_aud_muxed",
                 "type": "audio",
-                "quality": f"Audio Original · {title[:42]} (M4A)",
+                "quality": f"Audio Original · {title[:38]} (M4A)",
                 "ext": "m4a",
                 "url": first_vid["url"],
                 "filesizeFormatted": first_vid.get("filesizeFormatted"),
@@ -782,7 +1076,7 @@ def fetch_youtube_rich(target_url: str):
         "extractorKey": "TinaCore::YouTube",
         "engine": "Tina Hybrid",
         "serverUsed": "Tina Hybrid Core (YOUTUBE)",
-        "webpageUrl": f"https://www.youtube.com/watch?v={video_id}",
+        "webpageUrl": canonical_yt_url,
         "thumbnail": thumb,
         "duration": duration_str,
         "uploadDate": upload_date,
@@ -872,123 +1166,11 @@ def fetch_universal_fallback(target_url: str):
         if yt:
             return yt
 
-    title = "Media Stream HD"
-    author = "Creator"
-    author_url = None
-    thumb = "/thumbnail.jpg"
+    aio = fetch_theresav_aio(target_url)
+    if aio:
+        return aio
 
-    try:
-        oe_url = f"https://noembed.com/embed?url={urllib.parse.quote(target_url)}"
-        req = urllib.request.Request(oe_url, headers={"User-Agent": CHROME_UA})
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            oe = json.loads(resp.read().decode("utf-8"))
-            title = oe.get("title") or title
-            author = oe.get("author_name") or author
-            author_url = oe.get("author_url") or author_url
-            thumb = oe.get("thumbnail_url") or thumb
-    except Exception:
-        pass
-
-    sample_hd = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-    sample_sd = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4"
-
-    is_audio = any(k in lower for k in ("soundcloud.com", "spotify.com", "music.apple.com", "bandcamp.com"))
-    if is_audio:
-        return {
-            "title": "Mangu — Fourtwnty, Charita Utami" if title == "Media Stream HD" else title,
-            "author": "Fourtwnty, Charita Utami" if author == "Creator" else author,
-            "authorUrl": author_url,
-            "platform": "spotify" if "spotify" in lower else "soundcloud",
-            "extractorKey": "TinaCore::Audio",
-            "engine": "Tina Hybrid",
-            "serverUsed": "Tina Hybrid Core (AUDIO)",
-            "webpageUrl": target_url,
-            "thumbnail": thumb,
-            "duration": "06:13",
-            "uploadDate": time.strftime("%Y-%m-%d"),
-            "resolution": "320kbps HQ Full Audio",
-            "acodec": "MP3 320kbps",
-            "filesizeApprox": "8.9 MB",
-            "downloads": [
-                {
-                    "id": "aud_320",
-                    "type": "audio",
-                    "quality": "Audio Full Track 320kbps (MP3)",
-                    "ext": "mp3",
-                    "url": FULL_LENGTH_FALLBACK_MP3,
-                    "filesizeFormatted": "8.9 MB",
-                    "acodec": "MP3",
-                    "resolution": "320kbps",
-                },
-                {
-                    "id": "aud_128",
-                    "type": "audio",
-                    "quality": "Audio Full Track 128kbps (MP3)",
-                    "ext": "mp3",
-                    "url": FULL_LENGTH_FALLBACK_MP3,
-                    "filesizeFormatted": "4.2 MB",
-                    "acodec": "MP3",
-                    "resolution": "128kbps",
-                },
-            ],
-        }
-
-    return {
-        "title": title,
-        "author": author,
-        "authorUrl": author_url,
-        "platform": "media",
-        "extractorKey": "TinaCore::Universal",
-        "engine": "Tina Hybrid",
-        "serverUsed": "Tina Hybrid Core",
-        "webpageUrl": target_url,
-        "thumbnail": thumb,
-        "duration": "04:12",
-        "uploadDate": time.strftime("%Y-%m-%d"),
-        "viewCount": 114856,
-        "likeCount": 3957,
-        "resolution": "1920x1080 (Full HD)",
-        "fps": 30,
-        "vcodec": "H.264 (AVC1)",
-        "acodec": "AAC / MP3",
-        "filesizeApprox": "42.0 MB",
-        "downloads": [
-            {
-                "id": "uni_1080p",
-                "type": "video",
-                "quality": "Video 1080p Full HD (MP4)",
-                "ext": "mp4",
-                "url": sample_hd,
-                "filesizeFormatted": "42.0 MB",
-                "resolution": "1080p",
-                "vcodec": "H.264",
-                "acodec": "AAC",
-                "fps": 30,
-            },
-            {
-                "id": "uni_720p",
-                "type": "video",
-                "quality": "Video 720p HD (MP4)",
-                "ext": "mp4",
-                "url": sample_sd,
-                "filesizeFormatted": "21.4 MB",
-                "resolution": "720p",
-                "vcodec": "H.264",
-                "acodec": "AAC",
-                "fps": 30,
-            },
-            {
-                "id": "uni_mp3",
-                "type": "audio",
-                "quality": "Audio Full Track 320kbps (MP3)",
-                "ext": "mp3",
-                "url": FULL_LENGTH_FALLBACK_MP3,
-                "filesizeFormatted": "8.9 MB",
-                "acodec": "MP3 320kbps",
-                "resolution": "320kbps",
-            },
-        ],
-    }
+    raise RuntimeError("Tidak dapat mengekstrak media dari tautan tersebut. Pastikan URL bersifat publik dan valid.")
 
 
 def extract_full_metadata(target_url: str):
@@ -1014,7 +1196,9 @@ def extract_full_metadata(target_url: str):
         import sys
         sys.path.insert(0, os.path.join(ROOT_DIR, "server"))
         import py_engine
-        return py_engine.extract_media(target_url)
+        res = py_engine.extract_media(target_url)
+        if res and res.get("downloads"):
+            return res
     except Exception:
         pass
 
@@ -1037,6 +1221,20 @@ class handler(BaseHTTPRequestHandler):
         raw_url = (raw_url or "").strip()
         if raw_url.startswith("http"):
             return raw_url
+        if raw_url.startswith("theresav_resolve:"):
+            parts = raw_url.replace("theresav_resolve:", "").split(":")
+            mode = parts[0] if parts else "ytmp4"
+            vid = parts[1] if len(parts) > 1 else ""
+            res_p = parts[2] if len(parts) > 2 else "720"
+            yt_u = vid if vid.startswith("http") else f"https://www.youtube.com/watch?v={vid}"
+            tv_res = fetch_theresav_endpoint(
+                "ytmp3" if mode == "ytmp3" else "ytmp4",
+                yt_u,
+                "" if mode == "ytmp3" else f"&resolution={res_p}",
+                16,
+            )
+            if tv_res and isinstance(tv_res.get("download_url"), str):
+                return tv_res["download_url"]
         if raw_url.startswith("youtube_resolve:") or raw_url.startswith("ytmp3gg_resolve:"):
             parts = re.sub(r"^(youtube_resolve:|ytmp3gg_resolve:)", "", raw_url).split(":::")
             yt_u = parts[0] if parts else ""
@@ -1046,8 +1244,18 @@ class handler(BaseHTTPRequestHandler):
                 r"(?:v=|youtu\.be/|shorts/|embed/|live/)([A-Za-z0-9_-]{11})",
                 yt_u,
             )
-            if vid_m:
-                resolved = resolve_gammacloud_youtube(vid_m.group(1), fmt)
+            vid_id = vid_m.group(1) if vid_m else (yt_u if len(yt_u) == 11 else None)
+            if vid_id:
+                full_u = f"https://www.youtube.com/watch?v={vid_id}"
+                tv_res = fetch_theresav_endpoint(
+                    "ytmp3" if fmt == "mp3" else "ytmp4",
+                    full_u,
+                    "" if fmt == "mp3" else "&resolution=1080",
+                    14,
+                )
+                if tv_res and isinstance(tv_res.get("download_url"), str):
+                    return tv_res["download_url"]
+                resolved = resolve_gammacloud_youtube(vid_id, fmt)
                 if resolved:
                     return resolved
         sp_m = re.search(
@@ -1116,8 +1324,25 @@ class handler(BaseHTTPRequestHandler):
 
                 data_bytes = upstream.read(MAX_CHUNK + 200000)
 
-                # Fix malformed Content-Range from proxy.piped.private.coffee using clen query param
+                # If upstream ignored Range (status 200) and file exceeds MAX_CHUNK, redirect directly to CDN
+                # so Vercel serverless does not truncate the media stream at 3.5 MB!
                 m_clen = re.search(r"[?&]clen=(\d+)", target_url)
+                if status_code == 200 and not m_clen and len(data_bytes) >= MAX_CHUNK:
+                    self.send_response(302)
+                    self.send_header("Location", target_url)
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    return
+
+                # Sniff container magic bytes (ftypdash / ftypisom served with audio/mpeg)
+                if len(data_bytes) >= 32 and data_bytes[4:8] == b"ftyp":
+                    header_slice = data_bytes[:32]
+                    if b"avc1" in header_slice and ext_hint not in ("mp3", "m4a"):
+                        ctype = "video/mp4"
+                    elif ctype == "audio/mpeg":
+                        ctype = "video/mp4" if b"avc1" in header_slice else "audio/mp4"
+
+                # Fix malformed Content-Range from proxy.piped.private.coffee using clen query param
                 if m_clen and data_bytes and not is_download:
                     total_clen = int(m_clen.group(1))
                     if total_clen > 0:
@@ -1128,7 +1353,8 @@ class handler(BaseHTTPRequestHandler):
                 self.send_response(status_code)
                 self.send_header("Content-Type", ctype)
                 self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Accept-Ranges", "bytes")
+                if status_code == 206 or crange or m_clen:
+                    self.send_header("Accept-Ranges", "bytes")
                 if crange:
                     self.send_header("Content-Range", crange)
                 if is_download:

@@ -2025,17 +2025,77 @@ export async function resolveUrl(url, onStatus) {
     return foundLink;
   }
 
+  if (url.startsWith("theresav_resolve:")) {
+    // Format: theresav_resolve:ytmp4:<videoId>:<resolution> or theresav_resolve:ytmp3:<videoId>
+    const parts = url.replace("theresav_resolve:", "").split(":");
+    const mode = parts[0] || "ytmp4";
+    const vid = parts[1] || "";
+    const resParam = parts[2] || "720";
+    const ytUrl = vid.startsWith("http")
+      ? vid
+      : `https://www.youtube.com/watch?v=${vid}`;
+    const apiEndpoint =
+      mode === "ytmp3"
+        ? `https://api.theresav.eu/api/download/ytmp3?url=${encodeURIComponent(ytUrl)}`
+        : `https://api.theresav.eu/api/download/ytmp4?url=${encodeURIComponent(ytUrl)}&resolution=${encodeURIComponent(resParam)}`;
+    const r = await fetch(apiEndpoint, {
+      headers: {
+        "User-Agent": CHROME_UA,
+        "x-apikey": "ntzckofficial",
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (r.ok) {
+      const d = await r.json();
+      if (d?.download_url && String(d.download_url).startsWith("http")) {
+        return d.download_url;
+      }
+    }
+    throw new Error("Could not resolve TheresaV media stream.");
+  }
+
   if (
     url.startsWith("youtube_resolve:") ||
     url.startsWith("ytmp3gg_resolve:")
   ) {
-    if (onStatus) onStatus("Resolving YouTube stream via GammaCloud...");
+    if (onStatus) onStatus("Resolving YouTube stream via TheresaV & GammaCloud...");
     const raw = url.startsWith("youtube_resolve:")
       ? url.replace("youtube_resolve:", "")
       : url.replace("ytmp3gg_resolve:", "");
     const [ytId, format = "mp3"] = raw.split("|||");
     const fmt = format.toLowerCase() === "mp4" ? "mp4" : "mp3";
+    const fullYtUrl = ytId.startsWith("http")
+      ? ytId
+      : `https://www.youtube.com/watch?v=${ytId}`;
 
+    // 1. Primary: TheresaV API (ytmp3 / ytmp4 / ytdl)
+    try {
+      const ep =
+        fmt === "mp3"
+          ? `https://api.theresav.eu/api/download/ytmp3?url=${encodeURIComponent(fullYtUrl)}`
+          : `https://api.theresav.eu/api/download/ytmp4?url=${encodeURIComponent(fullYtUrl)}&resolution=1080`;
+      const tvRes = await fetch(ep, {
+        headers: {
+          "User-Agent": CHROME_UA,
+          "x-apikey": "ntzckofficial",
+          Accept: "application/json",
+        },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (tvRes.ok) {
+        const tvData = await tvRes.json();
+        if (
+          tvData?.download_url &&
+          typeof tvData.download_url === "string" &&
+          tvData.download_url.startsWith("http")
+        ) {
+          return tvData.download_url;
+        }
+      }
+    } catch (_) {}
+
+    // 2. Backup: GammaCloud
     const landingRes = await fetch("https://ytmp3.as/", {
       headers: { "User-Agent": CHROME_UA },
       redirect: "follow",
