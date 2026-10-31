@@ -116,12 +116,15 @@ export function V10VideoPlayer({
     };
   }, []);
 
-  // Preserve playback time when switching resolutions
+  // Preserve playback time when switching resolutions + watchdog for mdat-first streams
   useEffect(() => {
     const vid = videoRef.current;
     if (!vid || useYoutubeEmbed) return;
     setIsWaiting(true);
+    let metadataLoaded = false;
+
     const handleLoaded = () => {
+      metadataLoaded = true;
       setIsWaiting(false);
       setDuration(vid.duration || 0);
       vid.playbackRate = playbackRate;
@@ -134,8 +137,29 @@ export function V10VideoPlayer({
         vid.play().catch(() => {});
       }
     };
+
     vid.addEventListener('loadedmetadata', handleLoaded, { once: true });
-    return () => vid.removeEventListener('loadedmetadata', handleLoaded);
+
+    let watchdogTimer: number | null = null;
+    if (activeStream.url.includes('theresav.eu') || activeStream.needsResolve) {
+      watchdogTimer = window.setTimeout(() => {
+        if (!metadataLoaded && vid.readyState < 1) {
+          const faststartCandidate = videoStreams.find(
+            (s) => s.url !== activeStream.url && s.url.includes('piped.private.coffee')
+          );
+          if (faststartCandidate) {
+            onSelectStream(faststartCandidate);
+          } else if (youtubeId) {
+            setUseYoutubeEmbed(true);
+          }
+        }
+      }, 5500);
+    }
+
+    return () => {
+      vid.removeEventListener('loadedmetadata', handleLoaded);
+      if (watchdogTimer) window.clearTimeout(watchdogTimer);
+    };
   }, [activeStream.url, useYoutubeEmbed]);
 
   useEffect(() => {
@@ -653,6 +677,7 @@ interface V10AudioPlayerProps {
   thumbnail?: string;
   webpageUrl?: string;
   durationHint?: string;
+  fallbackStreamUrl?: string;
   compact?: boolean;
   onDownload: (stream: DownloadStream) => void;
   buildStreamUrl: (url: string) => string;
@@ -665,6 +690,7 @@ export function V10AudioPlayer({
   thumbnail,
   webpageUrl,
   durationHint,
+  fallbackStreamUrl,
   compact = false,
   onDownload,
   buildStreamUrl,
@@ -708,7 +734,21 @@ export function V10AudioPlayer({
         })
         .catch(() => {});
     }
-  }, [stream.url, stream.needsResolve, durationHint]);
+
+    let watchdog: number | null = null;
+    if (stream.url.includes('theresav.eu') && fallbackStreamUrl && fallbackStreamUrl !== stream.url) {
+      watchdog = window.setTimeout(() => {
+        const el = audioRef.current;
+        if (el && el.readyState < 1) {
+          setResolvedTokenUrl(`/api/proxy-stream?url=${encodeURIComponent(fallbackStreamUrl)}&ext=m4a`);
+        }
+      }, 5000);
+    }
+
+    return () => {
+      if (watchdog) window.clearTimeout(watchdog);
+    };
+  }, [stream.url, stream.needsResolve, durationHint, fallbackStreamUrl]);
 
   const effectiveAudioSrc = (() => {
     if (resolvedTokenUrl) return resolvedTokenUrl;
@@ -775,6 +815,8 @@ export function V10AudioPlayer({
         onError={() => {
           if (fallbackStage < 1) {
             setFallbackStage((prev) => prev + 1);
+          } else if (fallbackStreamUrl && !resolvedTokenUrl) {
+            setResolvedTokenUrl(`/api/proxy-stream?url=${encodeURIComponent(fallbackStreamUrl)}&ext=m4a`);
           }
         }}
         onPlay={() => setIsPlaying(true)}

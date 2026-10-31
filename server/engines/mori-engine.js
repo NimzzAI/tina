@@ -2162,7 +2162,9 @@ export async function resolveUrl(url, onStatus) {
             signal: AbortSignal.timeout(8000),
           });
           const pData = await pRes.json();
-          if (pData?.error > 0) break;
+          if (pData?.error > 0) {
+            throw new Error(`GammaCloud error code ${pData.error}`);
+          }
           if ((pData?.progress ?? 0) >= 3) break;
           await new Promise((r) => setTimeout(r, 1200));
         }

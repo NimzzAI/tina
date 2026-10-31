@@ -1559,6 +1559,10 @@ export default function App() {
                               thumbnail={mediaResult.thumbnail}
                               webpageUrl={mediaResult.webpageUrl}
                               durationHint={mediaResult.duration}
+                              fallbackStreamUrl={
+                                audioStreams.find((s) => s.url.includes('piped.private.coffee'))?.url ||
+                                videoStreams.find((s) => s.url.includes('piped.private.coffee'))?.url
+                              }
                               onDownload={(s) => handleDownloadStream(s)}
                               buildStreamUrl={buildProxyStreamUrl}
                             />
@@ -1588,6 +1592,10 @@ export default function App() {
                               author={mediaResult.author}
                               webpageUrl={mediaResult.webpageUrl}
                               durationHint={mediaResult.duration}
+                              fallbackStreamUrl={
+                                audioStreams.find((s) => s.url.includes('piped.private.coffee'))?.url ||
+                                videoStreams.find((s) => s.url.includes('piped.private.coffee'))?.url
+                              }
                               compact
                               onDownload={(s) => handleDownloadStream(s)}
                               buildStreamUrl={buildProxyStreamUrl}

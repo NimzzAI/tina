@@ -390,7 +390,7 @@ async function resolveGammaCloudYouTube(
         });
         if (pRes.ok) {
           const pData: any = await pRes.json();
-          if (pData?.error > 0) break;
+          if (pData?.error > 0) return null;
           if ((pData?.progress ?? 0) >= 3) break;
         }
         await new Promise((r) => setTimeout(r, 1200));
@@ -448,6 +448,26 @@ async function fetchTheresaVEndpoint(
   } catch {
     return null;
   }
+}
+
+async function fetchPipedStreams(videoId: string): Promise<any | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`https://api.piped.private.coffee/streams/${videoId}`, {
+        headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.ok) {
+        const data: any = await res.json();
+        if (data && (Array.isArray(data.videoStreams) || data.title)) {
+          return data;
+        }
+      }
+    } catch {
+      // retry once
+    }
+  }
+  return null;
 }
 
 async function fetchTheresaVAioMedia(targetUrl: string): Promise<any | null> {
@@ -556,7 +576,8 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
   let ytDescription: string | undefined;
 
   const downloads: any[] = [];
-  const seenUrls = new Set<string>();
+  const seenVideoUrls = new Set<string>();
+  const seenAudioUrls = new Set<string>();
 
   // Run TheresaV (ytmp4 1080p, ytmp4 360p, ytmp3, ytdl, aio), Piped, oEmbed, and CnvMP3 in parallel
   const [
@@ -574,10 +595,7 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
     fetchTheresaVEndpoint('ytmp3', targetUrl, '', 16000),
     fetchTheresaVEndpoint('ytdl', targetUrl, '', 14000),
     fetchTheresaVEndpoint('aio', targetUrl, '', 14000),
-    fetch(`https://api.piped.private.coffee/streams/${videoId}`, {
-      headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },
-      signal: AbortSignal.timeout(7000),
-    }).then(async (r) => (r.ok ? r.json() : null)),
+    fetchPipedStreams(videoId),
     fetch(
       `https://www.youtube.com/oembed?url=${encodeURIComponent(canonicalYtUrl)}&format=json`,
       { headers: { 'User-Agent': CHROME_UA }, signal: AbortSignal.timeout(5000) }
@@ -594,7 +612,7 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
   const oe: any = oembedSettled.status === 'fulfilled' ? oembedSettled.value : null;
   let gammaMp3Url: string | null =
     gammaMp3Settled.status === 'fulfilled' ? gammaMp3Settled.value : null;
-  if (!tvMp3?.download_url && !gammaMp3Url) {
+  if (!tvMp3?.download_url && !gammaMp3Url && (!pdata?.duration || pdata.duration <= 1500)) {
     gammaMp3Url = await resolveGammaCloudYouTube(videoId, 'mp3', false);
   }
 
@@ -654,11 +672,44 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
     if (oe.thumbnail_url && ytThumb.includes('maxresdefault')) ytThumb = oe.thumbnail_url;
   }
 
-  // 3. Add Primary Video Streams from TheresaV (ytmp4 1080p/720p, ytdl top-level, ytmp4 360p)
+  // 3. Add Piped Faststart Progressive Video Streams FIRST (moov at byte 24 + Range 206 support for instant playback of long videos)
+  const pipedProgressiveStreams: any[] =
+    pdata && Array.isArray(pdata.videoStreams)
+      ? pdata.videoStreams.filter((s: any) => !s?.videoOnly && typeof s?.url === 'string')
+      : [];
+
+  for (const s of pipedProgressiveStreams) {
+    if (seenVideoUrls.has(s.url)) continue;
+    seenVideoUrls.add(s.url);
+    const resLabel = String(s.quality || '360p');
+    const clenMatch = String(s.url).match(/[?&]clen=(\d+)/);
+    const clenBytes = clenMatch ? Number(clenMatch[1]) : null;
+    const estBytes =
+      clenBytes ||
+      (s.bitrate && ytDurationSec ? Math.floor((Number(s.bitrate) / 8) * ytDurationSec) : null);
+
+    downloads.push({
+      id: `yt_${videoId}_vid_${resLabel}`,
+      type: 'video',
+      quality: `Video ${resLabel} ${
+        resLabel.includes('1080') ? 'Full HD' : resLabel.includes('720') ? 'HD' : 'SD'
+      } · Instant Stream (MP4)`,
+      ext: 'mp4',
+      url: s.url,
+      filesize: estBytes,
+      filesizeFormatted: formatBytes(estBytes),
+      resolution: resLabel,
+      vcodec: 'H.264',
+      acodec: 'AAC',
+      fps: s.fps || 30,
+    });
+  }
+
+  // 4. Add Direct Download Video Streams from TheresaV (ytmp4 1080p/720p, ytdl top-level, ytmp4 360p)
   const addTheresaVideo = (tvObj: any, fallbackRes: string, idSuffix: string) => {
     const dl = tvObj?.download_url;
-    if (typeof dl === 'string' && dl.startsWith('http') && !seenUrls.has(dl)) {
-      seenUrls.add(dl);
+    if (typeof dl === 'string' && dl.startsWith('http') && !seenVideoUrls.has(dl)) {
+      seenVideoUrls.add(dl);
       const rawRes = String(tvObj.resolution || fallbackRes).replace(/p$/i, '');
       const resLabel = `${rawRes}p`;
       const bytes = typeof tvObj.filesize === 'number' && tvObj.filesize > 0 ? tvObj.filesize : null;
@@ -666,7 +717,7 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
       downloads.push({
         id: `yt_${videoId}_tv_${idSuffix}_${resLabel}`,
         type: 'video',
-        quality: `Video ${resLabel} ${tier} · Direct Stream (MP4)`,
+        quality: `Video ${resLabel} ${tier} · Direct Download (MP4)`,
         ext: 'mp4',
         url: dl,
         filesize: bytes,
@@ -685,38 +736,7 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
   }
   addTheresaVideo(tvMp4Sd, '360', 'sd');
 
-  // 4. Add Piped Progressive Video Streams
-  if (pdata && Array.isArray(pdata.videoStreams)) {
-    const progressive = pdata.videoStreams.filter((s: any) => !s?.videoOnly && typeof s?.url === 'string');
-    for (const s of progressive) {
-      if (seenUrls.has(s.url)) continue;
-      seenUrls.add(s.url);
-      const resLabel = String(s.quality || '360p');
-      const clenMatch = String(s.url).match(/[?&]clen=(\d+)/);
-      const clenBytes = clenMatch ? Number(clenMatch[1]) : null;
-      const estBytes =
-        clenBytes ||
-        (s.bitrate && ytDurationSec ? Math.floor((Number(s.bitrate) / 8) * ytDurationSec) : null);
-
-      downloads.push({
-        id: `yt_${videoId}_vid_${resLabel}`,
-        type: 'video',
-        quality: `Video ${resLabel} ${
-          resLabel.includes('1080') ? 'Full HD' : resLabel.includes('720') ? 'HD' : 'SD'
-        } (MP4)`,
-        ext: 'mp4',
-        url: s.url,
-        filesize: estBytes,
-        filesizeFormatted: formatBytes(estBytes),
-        resolution: resLabel,
-        vcodec: 'H.264',
-        acodec: 'AAC',
-        fps: s.fps || 30,
-      });
-    }
-  }
-
-  // 5. Add on-demand resolution options from TheresaV AIO (480p, 240p, 144p, etc.)
+  // 5. Add on-demand resolution options from TheresaV AIO (1080p, 720p, 480p, 360p, 240p)
   if (tvAio?.result && Array.isArray(tvAio.result.medias)) {
     const existingRes = new Set(
       downloads.filter((d) => d.type === 'video').map((d) => String(d.resolution || '').toLowerCase())
@@ -750,10 +770,10 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
   }
 
   // 6. If no video stream yet, fallback to GammaCloud MP4
-  if (!downloads.some((d) => d.type === 'video')) {
+  if (!downloads.some((d) => d.type === 'video') && ytDurationSec <= 1500) {
     const gammaMp4Url = await resolveGammaCloudYouTube(videoId, 'mp4');
-    if (gammaMp4Url && !seenUrls.has(gammaMp4Url)) {
-      seenUrls.add(gammaMp4Url);
+    if (gammaMp4Url && !seenVideoUrls.has(gammaMp4Url)) {
+      seenVideoUrls.add(gammaMp4Url);
       downloads.unshift({
         id: `yt_${videoId}_mp4_hd`,
         type: 'video',
@@ -769,14 +789,26 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
     }
   }
 
-  // 7. Add Audio Streams (Prioritizing TheresaV ytmp3 & CnvMP3/GammaCloud before Piped M4A)
-  if (tvMp3?.download_url && typeof tvMp3.download_url === 'string' && tvMp3.download_url.startsWith('http')) {
+  // 7. Add Audio Streams (Ensuring faststart Range-capable audio stream is ALWAYS first so long 30m+ audio plays immediately)
+  const isSameSizeAsVideo = Boolean(
+    tvMp4Hd?.filesize && tvMp3?.filesize && Number(tvMp4Hd.filesize) === Number(tvMp3.filesize)
+  );
+  const isLongUnstreamableTvMp3 =
+    isSameSizeAsVideo ||
+    (typeof tvMp3?.filesize === 'number' && tvMp3.filesize > 45_000_000) ||
+    ytDurationSec > 900;
+
+  // 7a. If TheresaV ytmp3 is a true faststart fragmented M4A/MP3 (short/medium videos), add it first
+  if (
+    !isLongUnstreamableTvMp3 &&
+    tvMp3?.download_url &&
+    typeof tvMp3.download_url === 'string' &&
+    tvMp3.download_url.startsWith('http')
+  ) {
     const mp3Dl = tvMp3.download_url;
-    seenUrls.add(mp3Dl);
-    const isSameSizeAsVideo =
-      tvMp4Hd?.filesize && tvMp3.filesize && Number(tvMp4Hd.filesize) === Number(tvMp3.filesize);
+    seenAudioUrls.add(mp3Dl);
     const audioBytes =
-      !isSameSizeAsVideo && typeof tvMp3.filesize === 'number' && tvMp3.filesize > 0
+      typeof tvMp3.filesize === 'number' && tvMp3.filesize > 0
         ? tvMp3.filesize
         : ytDurationSec > 0
           ? ytDurationSec * 16000
@@ -794,8 +826,9 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
     });
   }
 
-  if (gammaMp3Url && !seenUrls.has(gammaMp3Url)) {
-    seenUrls.add(gammaMp3Url);
+  // 7b. Add GammaCloud / CnvMP3 320kbps MP3 if available
+  if (gammaMp3Url && !seenAudioUrls.has(gammaMp3Url)) {
+    seenAudioUrls.add(gammaMp3Url);
     const estMp3Bytes = ytDurationSec > 0 ? ytDurationSec * 16000 : null;
     downloads.push({
       id: `yt_${videoId}_mp3_full`,
@@ -810,10 +843,11 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
     });
   }
 
+  // 7c. Add Piped pure audio streams if available
   if (pdata && Array.isArray(pdata.audioStreams)) {
     for (const a of pdata.audioStreams.slice(0, 2)) {
-      if (typeof a?.url === 'string' && !seenUrls.has(a.url)) {
-        seenUrls.add(a.url);
+      if (typeof a?.url === 'string' && !seenAudioUrls.has(a.url)) {
+        seenAudioUrls.add(a.url);
         const abr = String(a.quality || '128kbps');
         const clenMatch = String(a.url).match(/[?&]clen=(\d+)/);
         const clenBytes = clenMatch ? Number(clenMatch[1]) : null;
@@ -830,6 +864,50 @@ async function fetchYouTubeRichMedia(targetUrl: string): Promise<any | null> {
         });
       }
     }
+  }
+
+  // 7d. Add Piped faststart progressive AAC stream as instant-play Audio (Essential for 30+ min videos where ytmp3 is mdat-first)
+  if (pipedProgressiveStreams.length > 0) {
+    const fastStream = pipedProgressiveStreams[0];
+    if (typeof fastStream?.url === 'string' && !seenAudioUrls.has(fastStream.url)) {
+      seenAudioUrls.add(fastStream.url);
+      const estAudBytes = ytDurationSec > 0 ? ytDurationSec * 16000 : null;
+      downloads.push({
+        id: `yt_${videoId}_aud_faststart`,
+        type: 'audio',
+        quality: `Audio Original HQ · Instant Stream (M4A)`,
+        ext: 'm4a',
+        url: fastStream.url,
+        filesize: estAudBytes,
+        filesizeFormatted: formatBytes(estAudBytes),
+        acodec: 'AAC 192kbps',
+        resolution: '192kbps',
+      });
+    }
+  }
+
+  // 7e. If TheresaV ytmp3 was a large/long mdat-first file, still include it as a secondary direct download option
+  if (
+    isLongUnstreamableTvMp3 &&
+    tvMp3?.download_url &&
+    typeof tvMp3.download_url === 'string' &&
+    tvMp3.download_url.startsWith('http') &&
+    !seenAudioUrls.has(tvMp3.download_url)
+  ) {
+    const mp3Dl = tvMp3.download_url;
+    seenAudioUrls.add(mp3Dl);
+    const estAudBytes = ytDurationSec > 0 ? ytDurationSec * 16000 : null;
+    downloads.push({
+      id: `yt_${videoId}_tv_mp3`,
+      type: 'audio',
+      quality: `Audio Direct Download · ${ytTitle.slice(0, 34)} (MP3)`,
+      ext: 'mp3',
+      url: mp3Dl,
+      filesize: estAudBytes,
+      filesizeFormatted: formatBytes(estAudBytes),
+      acodec: 'AAC / MP3',
+      resolution: '320kbps',
+    });
   }
 
   if (downloads.some((d) => d.type === 'video') && !downloads.some((d) => d.type === 'audio')) {
@@ -997,8 +1075,9 @@ function normalizePrimaryExtractorOutput(raw: any, targetUrl: string) {
   for (let idx = 0; idx < (raw.downloads || []).length; idx++) {
     const d = raw.downloads[idx];
     const rawUrl = String(d?.url || '').trim();
-    if (!rawUrl || seenUrls.has(rawUrl)) continue;
-    seenUrls.add(rawUrl);
+    const dedupKey = `${String(d?.type || 'media').toLowerCase()}::${rawUrl}`;
+    if (!rawUrl || seenUrls.has(dedupKey)) continue;
+    seenUrls.add(dedupKey);
 
     const needsResolve =
       rawUrl.startsWith('spotidown_resolve:') ||
@@ -1908,11 +1987,8 @@ async function startServer() {
         const boxMagic = firstBuf.subarray(4, 8).toString('ascii');
         const headerAscii = firstBuf.subarray(0, 32).toString('ascii');
         if (boxMagic === 'ftyp') {
-          if (headerAscii.includes('avc1') && inferredExt !== 'mp3' && inferredExt !== 'm4a') {
-            contentType = 'video/mp4';
-          } else if (contentType === 'audio/mpeg') {
-            contentType = headerAscii.includes('avc1') ? 'video/mp4' : 'audio/mp4';
-          }
+          contentType =
+            headerAscii.includes('dash') || headerAscii.includes('M4A') ? 'audio/mp4' : 'video/mp4';
         }
       }
 

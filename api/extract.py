@@ -455,7 +455,9 @@ def resolve_gammacloud_youtube(video_id: str, fmt: str = "mp3", fast_cache_only:
                     timeout=7,
                 ) as r_prog:
                     p = json.loads(r_prog.read().decode("utf-8", errors="ignore"))
-                if p.get("error", 0) > 0 or p.get("progress", 0) >= 3:
+                if p.get("error", 0) > 0:
+                    return None
+                if p.get("progress", 0) >= 3:
                     break
                 time.sleep(1.2)
 
@@ -747,13 +749,17 @@ def fetch_spotify_rich(target_url: str):
 
 
 def _fetch_piped_json(video_id: str):
-    try:
-        api_url = f"https://api.piped.private.coffee/streams/{video_id}"
-        req = urllib.request.Request(api_url, headers={"User-Agent": CHROME_UA, "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=7) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="ignore"))
-    except Exception:
-        return None
+    for _ in range(2):
+        try:
+            api_url = f"https://api.piped.private.coffee/streams/{video_id}"
+            req = urllib.request.Request(api_url, headers={"User-Agent": CHROME_UA, "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+                if isinstance(data, dict) and (data.get("videoStreams") or data.get("title")):
+                    return data
+        except Exception:
+            pass
+    return None
 
 
 def _fetch_yt_oembed(video_id: str):
@@ -879,13 +885,43 @@ def fetch_youtube_rich(target_url: str):
         if oe.get("thumbnail_url") and "maxresdefault" in thumb:
             thumb = oe["thumbnail_url"]
 
-    # 3. Add Primary Video Streams from TheresaV (ytmp4 1080p/720p, ytdl top-level, ytmp4 360p)
+    # 3. Add Piped Faststart Progressive Video Streams FIRST (moov at byte 24 + Range 206 support for instant playback of long videos)
+    seen_video_urls = set()
+    seen_audio_urls = set()
+    piped_progressive = []
+    if isinstance(pdata, dict):
+        v_streams = pdata.get("videoStreams") or []
+        piped_progressive = [s for s in v_streams if isinstance(s, dict) and not s.get("videoOnly") and s.get("url")]
+        for s in piped_progressive:
+            if s["url"] in seen_video_urls:
+                continue
+            seen_video_urls.add(s["url"])
+            res = s.get("quality") or "360p"
+            fps_val = s.get("fps") or 30
+            m_clen = re.search(r"[?&]clen=(\d+)", s["url"])
+            est_bytes = int(m_clen.group(1)) if m_clen else int(((s.get("bitrate") or 900000) / 8) * (duration_sec or 240))
+            downloads.append(
+                {
+                    "id": f"yt_{video_id}_{res}",
+                    "type": "video",
+                    "quality": f"Video {res} {'Full HD' if '1080' in res else 'HD' if '720' in res else 'SD'} · Instant Stream (MP4)",
+                    "ext": "mp4",
+                    "url": s["url"],
+                    "filesizeFormatted": format_bytes(est_bytes),
+                    "resolution": res,
+                    "vcodec": "H.264",
+                    "acodec": "AAC",
+                    "fps": fps_val,
+                }
+            )
+
+    # 4. Add Direct Download Video Streams from TheresaV (ytmp4 1080p/720p, ytdl top-level, ytmp4 360p)
     def add_tv_video(tv_obj, fallback_res, suffix):
         if not isinstance(tv_obj, dict):
             return
         dl = tv_obj.get("download_url")
-        if isinstance(dl, str) and dl.startswith("http") and dl not in seen_urls:
-            seen_urls.add(dl)
+        if isinstance(dl, str) and dl.startswith("http") and dl not in seen_video_urls:
+            seen_video_urls.add(dl)
             raw_res = str(tv_obj.get("resolution") or fallback_res).rstrip("pP")
             res_label = f"{raw_res}p"
             fsize = tv_obj.get("filesize") if isinstance(tv_obj.get("filesize"), int) else None
@@ -894,7 +930,7 @@ def fetch_youtube_rich(target_url: str):
                 {
                     "id": f"yt_{video_id}_tv_{suffix}_{res_label}",
                     "type": "video",
-                    "quality": f"Video {res_label} {tier} · Direct Stream (MP4)",
+                    "quality": f"Video {res_label} {tier} · Direct Download (MP4)",
                     "ext": "mp4",
                     "url": dl,
                     "filesizeFormatted": format_bytes(fsize),
@@ -909,33 +945,6 @@ def fetch_youtube_rich(target_url: str):
     if isinstance(tv_ytdl, dict) and tv_ytdl.get("download_url"):
         add_tv_video(tv_ytdl, "720", "ytdl")
     add_tv_video(tv_mp4_sd, "360", "sd")
-
-    # 4. Add Piped Progressive Video Streams
-    if isinstance(pdata, dict):
-        v_streams = pdata.get("videoStreams") or []
-        progressive = [s for s in v_streams if not s.get("videoOnly") and s.get("url")]
-        for s in progressive:
-            if s["url"] in seen_urls:
-                continue
-            seen_urls.add(s["url"])
-            res = s.get("quality") or "360p"
-            fps_val = s.get("fps") or 30
-            m_clen = re.search(r"[?&]clen=(\d+)", s["url"])
-            est_bytes = int(m_clen.group(1)) if m_clen else int(((s.get("bitrate") or 900000) / 8) * (duration_sec or 240))
-            downloads.append(
-                {
-                    "id": f"yt_{video_id}_{res}",
-                    "type": "video",
-                    "quality": f"Video {res} {'Full HD' if '1080' in res else 'HD' if '720' in res else 'SD'} (MP4)",
-                    "ext": "mp4",
-                    "url": s["url"],
-                    "filesizeFormatted": format_bytes(est_bytes),
-                    "resolution": res,
-                    "vcodec": "H.264",
-                    "acodec": "AAC",
-                    "fps": fps_val,
-                }
-            )
 
     # 5. Add on-demand resolution options from TheresaV AIO (480p, 240p, etc.)
     if isinstance(tv_aio, dict) and isinstance(tv_aio.get("result"), dict):
@@ -968,10 +977,10 @@ def fetch_youtube_rich(target_url: str):
                     )
 
     # 6. Fallback to GammaCloud MP4 if no video stream yet
-    if not any(d.get("type") == "video" for d in downloads):
+    if not any(d.get("type") == "video" for d in downloads) and duration_sec <= 1500:
         gamma_mp4 = resolve_gammacloud_youtube(video_id, "mp4")
-        if gamma_mp4 and gamma_mp4 not in seen_urls:
-            seen_urls.add(gamma_mp4)
+        if gamma_mp4 and gamma_mp4 not in seen_video_urls:
+            seen_video_urls.add(gamma_mp4)
             downloads.insert(
                 0,
                 {
@@ -988,19 +997,31 @@ def fetch_youtube_rich(target_url: str):
                 },
             )
 
-    # 7. Add Audio Streams (Prioritizing TheresaV ytmp3 & CnvMP3/GammaCloud before Piped M4A)
-    if isinstance(tv_mp3, dict) and isinstance(tv_mp3.get("download_url"), str) and tv_mp3["download_url"].startswith("http"):
+    # 7. Add Audio Streams (Ensuring faststart Range-capable audio stream is ALWAYS first so long 30m+ audio plays immediately)
+    same_as_vid = (
+        isinstance(tv_mp4_hd, dict)
+        and isinstance(tv_mp3, dict)
+        and tv_mp4_hd.get("filesize")
+        and tv_mp3.get("filesize")
+        and tv_mp4_hd.get("filesize") == tv_mp3.get("filesize")
+    )
+    is_long_unstreamable_tv_mp3 = (
+        bool(same_as_vid)
+        or (isinstance(tv_mp3, dict) and isinstance(tv_mp3.get("filesize"), int) and tv_mp3["filesize"] > 45_000_000)
+        or duration_sec > 900
+    )
+
+    if (
+        not is_long_unstreamable_tv_mp3
+        and isinstance(tv_mp3, dict)
+        and isinstance(tv_mp3.get("download_url"), str)
+        and tv_mp3["download_url"].startswith("http")
+    ):
         mp3_dl = tv_mp3["download_url"]
-        seen_urls.add(mp3_dl)
-        same_as_vid = (
-            isinstance(tv_mp4_hd, dict)
-            and tv_mp4_hd.get("filesize")
-            and tv_mp3.get("filesize")
-            and tv_mp4_hd.get("filesize") == tv_mp3.get("filesize")
-        )
+        seen_audio_urls.add(mp3_dl)
         aud_bytes = (
             tv_mp3.get("filesize")
-            if (not same_as_vid and isinstance(tv_mp3.get("filesize"), int) and tv_mp3["filesize"] > 0)
+            if (isinstance(tv_mp3.get("filesize"), int) and tv_mp3["filesize"] > 0)
             else (duration_sec * 16000 if duration_sec else None)
         )
         downloads.append(
@@ -1016,8 +1037,8 @@ def fetch_youtube_rich(target_url: str):
             }
         )
 
-    if gamma_mp3 and gamma_mp3 not in seen_urls:
-        seen_urls.add(gamma_mp3)
+    if gamma_mp3 and gamma_mp3 not in seen_audio_urls:
+        seen_audio_urls.add(gamma_mp3)
         downloads.append(
             {
                 "id": f"yt_{video_id}_mp3",
@@ -1033,10 +1054,10 @@ def fetch_youtube_rich(target_url: str):
 
     if isinstance(pdata, dict):
         a_streams = pdata.get("audioStreams") or []
-        for a in [x for x in a_streams if x.get("url")][:2]:
-            if a["url"] in seen_urls:
+        for a in [x for x in a_streams if isinstance(x, dict) and x.get("url")][:2]:
+            if a["url"] in seen_audio_urls:
                 continue
-            seen_urls.add(a["url"])
+            seen_audio_urls.add(a["url"])
             abr = a.get("quality") or "128kbps"
             downloads.append(
                 {
@@ -1049,6 +1070,46 @@ def fetch_youtube_rich(target_url: str):
                     "resolution": abr,
                 }
             )
+
+    if piped_progressive:
+        fast_stream = piped_progressive[0]
+        fast_u = fast_stream.get("url")
+        if isinstance(fast_u, str) and fast_u not in seen_audio_urls:
+            seen_audio_urls.add(fast_u)
+            downloads.append(
+                {
+                    "id": f"yt_{video_id}_aud_faststart",
+                    "type": "audio",
+                    "quality": "Audio Original HQ · Instant Stream (M4A)",
+                    "ext": "m4a",
+                    "url": fast_u,
+                    "filesizeFormatted": format_bytes(duration_sec * 16000) if duration_sec else None,
+                    "acodec": "AAC 192kbps",
+                    "resolution": "192kbps",
+                }
+            )
+
+    if (
+        is_long_unstreamable_tv_mp3
+        and isinstance(tv_mp3, dict)
+        and isinstance(tv_mp3.get("download_url"), str)
+        and tv_mp3["download_url"].startswith("http")
+        and tv_mp3["download_url"] not in seen_audio_urls
+    ):
+        mp3_dl = tv_mp3["download_url"]
+        seen_audio_urls.add(mp3_dl)
+        downloads.append(
+            {
+                "id": f"yt_{video_id}_tv_mp3",
+                "type": "audio",
+                "quality": f"Audio Direct Download · {title[:34]} (MP3)",
+                "ext": "mp3",
+                "url": mp3_dl,
+                "filesizeFormatted": format_bytes(duration_sec * 16000) if duration_sec else None,
+                "acodec": "AAC / MP3",
+                "resolution": "320kbps",
+            }
+        )
 
     if any(d.get("type") == "video" for d in downloads) and not any(d.get("type") == "audio" for d in downloads):
         first_vid = next(d for d in downloads if d.get("type") == "video")
@@ -1334,13 +1395,14 @@ class handler(BaseHTTPRequestHandler):
                     self.end_headers()
                     return
 
-                # Sniff container magic bytes (ftypdash / ftypisom served with audio/mpeg)
+                # Sniff container magic bytes (ftypdash / ftypisom / ftypmp42)
                 if len(data_bytes) >= 32 and data_bytes[4:8] == b"ftyp":
                     header_slice = data_bytes[:32]
-                    if b"avc1" in header_slice and ext_hint not in ("mp3", "m4a"):
-                        ctype = "video/mp4"
-                    elif ctype == "audio/mpeg":
-                        ctype = "video/mp4" if b"avc1" in header_slice else "audio/mp4"
+                    ctype = (
+                        "audio/mp4"
+                        if (b"dash" in header_slice or b"M4A" in header_slice)
+                        else "video/mp4"
+                    )
 
                 # Fix malformed Content-Range from proxy.piped.private.coffee using clen query param
                 if m_clen and data_bytes and not is_download:
